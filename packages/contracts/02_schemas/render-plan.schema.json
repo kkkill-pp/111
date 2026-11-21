@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:render-plan:v2",
+  "title": "Deterministic RenderPlan v2 (FFmpeg-Only V1)",
+  "description": "Single canonical compilation output shared by Preview and Final Render to guarantee editing semantic equivalence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "render_plan_version",
+    "render_mode",
+    "renderer",
+    "timeline_id",
+    "timeline_version",
+    "timeline_checksum",
+    "timeline_timebase",
+    "expected_duration_ticks",
+    "input_assets",
+    "output_profile",
+    "video_ops",
+    "audio_ops",
+    "subtitle_ops",
+    "overlay_ops",
+    "encoder_settings",
+    "determinism_flags"
+  ],
+  "properties": {
+    "render_plan_version": { "const": "2.0" },
+    "render_mode": { "enum": ["preview", "final"] },
+    "renderer": { "const": "ffmpeg" },
+    "timeline_id": { "type": "string", "format": "uuid" },
+    "timeline_version": { "type": "integer", "minimum": 1 },
+    "timeline_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timeline_timebase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["num", "den"],
+      "properties": {
+        "num": { "type": "integer", "minimum": 1 },
+        "den": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "render_range_ticks": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["start_tick", "end_tick"],
+      "properties": {
+        "start_tick": { "type": "integer", "minimum": 0 },
+        "end_tick": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "expected_duration_ticks": { "type": "integer", "minimum": 1 },
+    "input_assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_id", "storage_key", "checksum_sha256", "is_vfr"],
+        "properties": {
+          "asset_id": { "type": "string", "format": "uuid" },
+          "storage_key": { "type": "string", "minLength": 1 },
+          "checksum_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "is_vfr": { "type": "boolean" },
+          "pts_map_storage_key": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "output_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "frame_rate", "pixel_format", "audio_sample_rate", "audio_channels"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 16, "multipleOf": 2 },
+        "height": { "type": "integer", "minimum": 16, "multipleOf": 2 },
+        "frame_rate": {
+          "type": "object",
+          "required": ["num", "den"],
+          "properties": { "num": { "type": "integer", "minimum": 1 }, "den": { "type": "integer", "minimum": 1 } }
+        },
+        "pixel_format": { "enum": ["yuv420p"] },
+        "audio_sample_rate": { "type": "integer", "enum": [44100, 48000] },
+        "audio_channels": { "type": "integer", "enum": [1, 2] }
+      }
+    },
+    "video_ops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["clip_id", "asset_id", "source_in_tick", "source_out_tick", "timeline_start_tick", "duration_ticks", "speed", "transform"],
+        "properties": {
+          "clip_id": { "type": "string", "format": "uuid" },
+          "asset_id": { "type": "string", "format": "uuid" },
+          "source_in_tick": { "type": "integer", "minimum": 0 },
+          "source_out_tick": { "type": "integer", "minimum": 1 },
+          "timeline_start_tick": { "type": "integer", "minimum": 0 },
+          "duration_ticks": { "type": "integer", "minimum": 1 },
+          "speed": { "type": "number", "minimum": 0.25, "maximum": 4.0 },
+          "transform": { "type": "object" },
+          "transitions": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    },
+    "audio_ops": { "type": "array", "items": { "type": "object" } },
+    "subtitle_ops": { "type": "array", "items": { "type": "object" } },
+    "overlay_ops": { "type": "array", "items": { "type": "object" } },
+    "encoder_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["video_codec", "audio_codec", "preset", "crf_or_bitrate", "threads"],
+      "properties": {
+        "video_codec": { "enum": ["libx264", "h264_nvenc"] },
+        "audio_codec": { "enum": ["aac"] },
+        "preset": { "type": "string" },
+        "crf_or_bitrate": { "type": "string" },
+        "threads": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "faststart": { "type": "boolean", "default": true }
+      }
+    },
+    "determinism_flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allow_silent_semantic_fallback", "allow_arbitrary_filtergraph", "require_exact_duration_check"],
+      "properties": {
+        "allow_silent_semantic_fallback": { "const": false },
+        "allow_arbitrary_filtergraph": { "const": false },
+        "require_exact_duration_check": { "const": true }
+      }
+    }
+  }
+}

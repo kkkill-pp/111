@@ -1,0 +1,114 @@
+version: 2
+workflow: long_video_to_approved_short
+description: >
+  Task-level DAG workflow with explicit partial-success aggregation,
+  fencing-token guarded workers, and mandatory HITL review gates.
+
+stages:
+  - id: ingest
+    tasks:
+      - name: asset_probe
+        pool: cpu
+        depends_on: []
+        retryable: true
+        max_attempts: 3
+      - name: proxy_generate
+        pool: cpu
+        depends_on: [{ task: asset_probe, mode: strict }]
+        retryable: true
+        max_attempts: 3
+      - name: thumbnail_generate
+        pool: cpu
+        depends_on: [{ task: asset_probe, mode: strict }]
+        retryable: true
+        max_attempts: 3
+    success: asset_ready
+    failure: quarantine_or_fail
+
+  - id: understand
+    depends_on: [ingest]
+    tasks:
+      - name: asr_transcribe
+        pool: gpu
+        required_gpu_memory_mb: 6144
+        depends_on: [{ task: asset_probe, mode: strict }]
+      - name: scene_detect
+        pool: cpu
+        depends_on: [{ task: proxy_generate, mode: strict }]
+      - name: keyframe_sample
+        pool: cpu
+        depends_on: [{ task: scene_detect, mode: strict }]
+      - name: person_detect
+        pool: gpu
+        required_gpu_memory_mb: 2048
+        depends_on: [{ task: scene_detect, mode: strict }]
+      - name: vision_analyze
+        pool: cpu
+        depends_on: [{ task: keyframe_sample, mode: strict }]
+      - name: semantic_fuse
+        pool: cpu
+        depends_on:
+          - { task: asr_transcribe, mode: allow_partial }
+          - { task: scene_detect, mode: strict }
+          - { task: vision_analyze, mode: allow_partial }
+          - { task: person_detect, mode: allow_partial }
+      - name: candidate_generate
+        pool: cpu
+        depends_on: [{ task: semantic_fuse, mode: strict }]
+    partial_success_rule: >
+      If asr_transcribe or vision_analyze fails while scene_detect succeeds,
+      analysis_run transitions to status=partial and exposes completed artifacts for selective retry.
+
+  - id: creative_brief
+    human_gate: user_confirms_brief_version
+    required_fields: [target_platform, audience, objective, language, duration_range_sec, aspect_ratio]
+
+  - id: storyboard
+    tasks:
+      - name: storyboard_generate
+        pool: cpu
+        depends_on: [{ task: candidate_generate, mode: strict }]
+    human_gate: POST /storyboards/{id}/reviews (status must become approved)
+
+  - id: timeline_edit
+    human_gate: POST /proposals/{id}/reviews (for medium/high risk or copilot mode)
+
+  - id: preview
+    tasks:
+      - name: preview_render
+        pool: gpu
+        required_nvenc: false
+    human_gate: user_reviews_preview_before_final_render
+
+  - id: final_render_and_qa
+    tasks:
+      - name: final_render
+        pool: gpu
+        required_nvenc: true
+        required_gpu_memory_mb: 4096
+      - name: qa_check
+        pool: cpu
+        depends_on: [{ task: final_render, mode: strict }]
+    human_gate: POST /artifacts/{id}/reviews (blocked if qa_reports.status == failed)
+
+  - id: delivery
+    tasks:
+      - name: delivery
+        pool: delivery
+        depends_on: [{ task: qa_check, mode: strict }]
+    preconditions:
+      - artifact_status == ready
+      - qa_passed_or_warning_acknowledged
+      - current_human_review_approved_matching_checksum
+      - destination_authorized
+
+failure_policy:
+  retryable_errors: [provider_timeout, transient_storage_error, worker_lost, gpu_oom_after_replan]
+  non_retryable_errors: [invalid_media, permission_denied, schema_violation, unsupported_codec, fencing_token_mismatch]
+  backoff:
+    strategy: exponential_with_jitter
+    base_seconds: 10
+    max_seconds: 600
+  cancellation:
+    protocol: cooperative_checkpoint
+    cleanup_temp_artifacts: mandatory

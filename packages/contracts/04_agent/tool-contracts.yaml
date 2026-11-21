@@ -1,0 +1,134 @@
+version: 2
+principles:
+  - Agent has zero direct database, shell, filesystem, arbitrary FFmpeg, or unrestricted network access.
+  - Every Agent execution inherits the originating user's tenant_id and workspace RBAC ceiling; privilege escalation is forbidden.
+  - All writes go through Application Services with domain validation, optimistic locking, and AuditEvent logging.
+  - Silence or timeout is NEVER interpreted as human consent.
+  - Every Agent run enforces hard circuit breakers on steps, tool calls, tokens, cost, and wall time.
+
+circuit_breakers:
+  default_max_steps: 12
+  default_max_tool_calls: 20
+  default_max_cost_usd: 5.0
+  default_wall_time_sec: 180
+
+tools:
+  get_project_context:
+    access_tier: read
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor, reviewer, viewer]
+    input: { project_id: uuid }
+    output: { project_summary: object, active_timeline_id: uuid, active_timeline_version: integer, brief_version: object }
+
+  get_asset_analysis:
+    access_tier: read
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor, reviewer, viewer]
+    input: { asset_id: uuid, analysis_run_id: uuid }
+    output: { probe: object, transcript: object, scenes: array, semantic_segments: array, highlight_candidates: array }
+
+  search_segments:
+    access_tier: read
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor, reviewer, viewer]
+    input: { project_id: uuid, query: string, filters: object }
+    output: { matches: array }
+
+  get_timeline:
+    access_tier: read
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor, reviewer, viewer]
+    input: { timeline_id: uuid, version: integer }
+    output: { timeline_snapshot: object, snapshot_checksum: string }
+
+  propose_storyboard:
+    access_tier: propose
+    risk_tier: low
+    idempotent: false
+    allowed_roles: [owner, admin, editor]
+    input: { project_id: uuid, brief_version_id: uuid, candidate_ids: array, variants: integer }
+    output: { storyboard_id: uuid, version: integer, alternatives: array, confidence: number }
+    policy: creates storyboard in status=proposed; never creates a production timeline directly
+
+  propose_edit_operations:
+    access_tier: propose
+    risk_tier: medium
+    idempotent: false
+    allowed_roles: [owner, admin, editor]
+    input: { timeline_id: uuid, base_version: integer, user_intent: string }
+    output: { proposal_id: uuid, operations: array, rationale: string, evidence_refs: array, risk_level: string, impact_summary: object, diff: object }
+
+  validate_edit_operations:
+    access_tier: validate
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor, reviewer]
+    input: { timeline_id: uuid, base_version: integer, operations: array }
+    output: { valid: boolean, errors: array, warnings: array, diff: object }
+
+  apply_edit_operations:
+    access_tier: controlled_write
+    risk_tier: high
+    idempotent: true
+    allowed_roles: [owner, admin, editor]
+    input: { timeline_id: uuid, base_version: integer, proposal_id: uuid, approval_token: string }
+    output: { new_version: integer, operation_ids: array }
+    policy: >
+      Requires single-use version-bound approval_token for medium/high/critical risk,
+      or explicit workspace policy (supervised_autopilot + allow_auto_apply_low_risk=true) for low risk only.
+
+  undo_timeline_operation:
+    access_tier: controlled_write
+    risk_tier: medium
+    idempotent: true
+    allowed_roles: [owner, admin, editor]
+    input: { timeline_id: uuid, base_version: integer, target_version: integer }
+    output: { new_version: integer }
+    policy: appends a new inverse timeline version; never mutates or deletes prior versions
+
+  create_preview:
+    access_tier: execute
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor]
+    input: { timeline_id: uuid, timeline_version: integer, range_ticks: object }
+    output: { task_id: uuid, render_plan_id: uuid }
+
+  request_human_review:
+    access_tier: workflow
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor]
+    input: { subject_type: string, subject_id: uuid, subject_version: string, subject_checksum: string, review_reason: string }
+    output: { review_id: uuid, status: string }
+    policy: creates human_reviews row in status=pending; Agent cannot self-approve
+
+  run_quality_check:
+    access_tier: execute
+    risk_tier: low
+    idempotent: true
+    allowed_roles: [owner, admin, editor, reviewer]
+    input: { artifact_id: uuid }
+    output: { task_id: uuid }
+
+  request_final_render:
+    access_tier: execute
+    risk_tier: high
+    idempotent: true
+    allowed_roles: [owner, admin, editor]
+    input: { timeline_id: uuid, timeline_version: integer, output_profile: string, budget_estimate_usd: number, budget_acknowledged: boolean }
+    output: { task_id: uuid, render_plan_id: uuid }
+    policy: requires immutable timeline version, preview review gate (unless disabled by owner), and budget cap check
+
+  request_delivery:
+    access_tier: workflow
+    risk_tier: critical
+    idempotent: true
+    allowed_roles: [owner, admin]
+    input: { artifact_id: uuid, human_review_id: uuid, destination_type: string, destination_config: object }
+    output: { delivery_id: uuid, status: string }
+    policy: blocked unless QA status in (passed, warning-acknowledged) AND human_review is current and matches artifact checksum

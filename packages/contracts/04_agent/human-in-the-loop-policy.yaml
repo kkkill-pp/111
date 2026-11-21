@@ -1,0 +1,76 @@
+version: 2
+default_mode: copilot
+modes:
+  copilot:
+    description: AI proposes; human confirms ALL timeline changes, final renders, and deliveries.
+  supervised_autopilot:
+    description: AI may auto-apply strictly low-risk reversible edits when explicitly enabled by Workspace Owner; human confirms medium/high/critical actions.
+  batch_operator:
+    description: AI executes a pre-approved batch brief into proposals and previews; human approves each final artifact before delivery.
+
+risk_policy:
+  low:
+    examples:
+      - subtitle typo correction
+      - safe-zone adjustment within tolerance
+      - preview generation
+    action: auto_apply_only_if_workspace_enabled
+    audit: required
+    undo: required
+  medium:
+    examples:
+      - trim within sentence boundary
+      - moderate reframing adjustment
+      - shorten silence pauses
+    action: show_diff_and_require_human_review
+    audit: required
+    undo: required
+  high:
+    examples:
+      - remove a key argument or speaker turn
+      - reorder narrative sections
+      - replace speaker quote or alter brand claim
+      - initiate final render exceeding soft budget threshold
+    action: explicit_human_review_and_single_use_token
+    audit: required
+    undo: required
+  critical:
+    examples:
+      - external publishing or third-party delivery
+      - destructive project/asset deletion
+      - exceed hard workspace budget cap
+      - bypass QA warning
+    action: forbidden_for_agent_or_owner_explicit_approval
+    audit: required
+    undo: compensation_or_recall_plan
+
+gates:
+  storyboard_acceptance:
+    endpoint: POST /storyboards/{storyboard_id}/reviews
+    required_for: create_production_timeline
+    bind_to: [storyboard_id, storyboard_version, storyboard_checksum, brief_version_id]
+  edit_proposal:
+    endpoint: POST /proposals/{proposal_id}/reviews
+    required_fields: [base_version, operations, rationale, evidence_refs, risk_level, impact_summary, diff]
+    stale_if: timeline_current_version_changed
+  final_render:
+    required_for: create_final_render
+    checks: [timeline_version_immutable, preview_reviewed_or_waived, budget_within_cap_or_acknowledged]
+  artifact_approval:
+    endpoint: POST /artifacts/{artifact_id}/reviews
+    required_for: external_delivery
+    bind_to: [artifact_id, artifact_checksum, timeline_version, qa_report_id]
+    block_if: qa_report_status == failed
+  delivery:
+    required_for: publish_or_external_share
+    checks: [qa_passed_or_warning_acknowledged, review_status_approved_and_current, checksum_match, destination_authorized]
+
+invariants:
+  - silence_or_timeout_is_never_consent
+  - approval_is_version_and_checksum_bound
+  - approval_auto_invalidates_when_subject_changes
+  - users_can_select_reject_or_edit_individual_proposal_items
+  - every_agent_write_records_agent_id_and_originating_user_request
+  - every_applied_edit_creates_immutable_version_and_is_undoable
+  - agent_cannot_approve_its_own_reviews
+  - hard_constraints_are_enforced_by_code_and_db_not_prompt

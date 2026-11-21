@@ -1,0 +1,29 @@
+/opt/spark/local/lib/python3.11/dist-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+test_license_redline_zero_cloud_and_zero_ultralytics (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_license_redline_zero_cloud_and_zero_ultralytics) ... ok
+test_vendored_clip_selection_and_ffmpeg_utils (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_clip_selection_and_ffmpeg_utils) ... ok
+test_vendored_frame_sampler_and_commercial_safe_person_detector (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_frame_sampler_and_commercial_safe_person_detector) ... ok
+test_vendored_ssrf_guard_blocks_internal_and_metadata_ips (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_ssrf_guard_blocks_internal_and_metadata_ips) ... ok
+test_live_pg15_rls_isolation_render_plan_immutability_and_atomic_token (test_pg_store_integration.PostgresStoreLivePG15Test.test_live_pg15_rls_isolation_render_plan_immutability_and_atomic_token) ... skipped 'Set DATABASE_URL to run live PostgreSQL 15+ psycopg persistence & RLS tests'
+test_factory_selects_postgresql_when_dsn_provided_and_in_memory_otherwise (test_pg_store_integration.PostgresStoreOfflineUnitTest.test_factory_selects_postgresql_when_dsn_provided_and_in_memory_otherwise) ... ok
+test_healthz_reports_storage_backend (test_pg_store_integration.PostgresStoreOfflineUnitTest.test_healthz_reports_storage_backend) ... ok
+test_phase1_multitrack_split_move_subtitle_optimistic_lock_undo_redo_and_final_export (test_phase1_multitrack_and_pixels.Phase1MultiTrackAndPixelsTest.test_phase1_multitrack_split_move_subtitle_optimistic_lock_undo_redo_and_final_export)
+Full Phase 1 human multi-track editing loop: Upload -> Split -> Move -> Subtitle CRUD -> 409 Lock -> Undo -> Redo -> Final 1080p Export -> QA. ... ok
+test_pixel_level_subtitle_burnin_and_afade_reachability (test_phase1_multitrack_and_pixels.Phase1MultiTrackAndPixelsTest.test_pixel_level_subtitle_burnin_and_afade_reachability)
+Closes v5 §4.1 (afade reachable) and §4.2 (pixel-level subtitle visibility on identical duration clips). ... ok
+test_ffmpeg_export_duration_matches_rational_ticks (test_time_semantics_v3.TestTimeSemanticsV3.test_ffmpeg_export_duration_matches_rational_ticks)
+Real FFmpeg + ffprobe check: 4.0s source at 2.0x playback_rate with exact tick-bounded -t exports 2.00s. ... ok
+test_rational_exact_math_standard_and_ntsc_framerates (test_time_semantics_v3.TestTimeSemanticsV3.test_rational_exact_math_standard_and_ntsc_framerates) ... ok
+test_rejects_invalid_bounds (test_time_semantics_v3.TestTimeSemanticsV3.test_rejects_invalid_bounds) ... ok
+test_full_hitl_vertical_slice_with_real_subtitle_burnin_and_honest_qa (test_vertical_slice_e2e.VerticalSliceE2ETest.test_full_hitl_vertical_slice_with_real_subtitle_burnin_and_honest_qa) ... ok
+test_renderer_applies_audio_volume_and_mute_honestly (test_vertical_slice_e2e.VerticalSliceE2ETest.test_renderer_applies_audio_volume_and_mute_honestly)
+P0 §2.2 regression: audio_ops enabled=False MUST render real silence in FFmpeg output. ... ok
+test_renderer_forbids_silent_semantic_fallback_and_applies_speed (test_vertical_slice_e2e.VerticalSliceE2ETest.test_renderer_forbids_silent_semantic_fallback_and_applies_speed)
+P0-A regression test: unimplemented overlay/transition MUST fail loudly; speed MUST take effect. ... ok
+test_timeline_service_rejects_unimplemented_ops_and_applies_volume (test_vertical_slice_e2e.VerticalSliceE2ETest.test_timeline_service_rejects_unimplemented_ops_and_applies_volume)
+P0 §2.1 regression: unimplemented ops MUST fail 422 (zero silent no-ops); UPDATE_VOLUME mutates snapshot. ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 9.010s
+
+OK (skipped=1)
