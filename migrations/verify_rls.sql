@@ -83,7 +83,7 @@ DECLARE
 BEGIN
   SELECT count(*) INTO cnt FROM public.projects;
   SELECT count(*) INTO leaked FROM public.projects WHERE tenant_id <> '11111111-1111-4111-8111-111111111111'::uuid;
-  IF cnt <> 2 OR leaked <> 0 THEN
+  IF cnt <> 1 OR leaked <> 0 THEN
     RAISE EXCEPTION 'Tenant A RLS isolation failed under app_runtime: cnt=%, leaked=%', cnt, leaked;
   END IF;
 END $$;
