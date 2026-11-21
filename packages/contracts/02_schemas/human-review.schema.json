@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:human-review:v2",
+  "title": "Human Review Record v2",
+  "description": "Unified review record across Storyboards, Edit Proposals, Render Artifacts, and Deliveries. Explicitly models PENDING status; silence is never consent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "review_id",
+    "subject_type",
+    "subject_id",
+    "subject_version",
+    "subject_checksum",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "review_id": { "type": "string", "format": "uuid" },
+    "subject_type": { "enum": ["storyboard", "edit_proposal", "render_artifact", "delivery"] },
+    "subject_id": { "type": "string", "format": "uuid" },
+    "subject_version": { "type": "string", "minLength": 1 },
+    "subject_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "qa_report_id": { "type": ["string", "null"], "format": "uuid" },
+    "status": {
+      "enum": ["pending", "approved", "approved_with_warnings", "rejected", "changes_requested", "expired", "superseded"]
+    },
+    "decision": {
+      "type": ["string", "null"],
+      "enum": ["approve", "approve_with_warnings", "reject", "request_changes", null]
+    },
+    "reviewer_id": { "type": ["string", "null"], "format": "uuid" },
+    "review_reason": { "type": ["string", "null"], "maxLength": 2000 },
+    "comment": { "type": ["string", "null"], "maxLength": 5000 },
+    "selected_items": { "type": "array", "items": { "type": "string" } },
+    "rejected_items": { "type": "array", "items": { "type": "string" } },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "decided_at": { "type": ["string", "null"], "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

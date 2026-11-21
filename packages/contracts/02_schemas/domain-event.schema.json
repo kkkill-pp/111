@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:domain-event:v2",
+  "title": "Domain Event Envelope v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "tenant_id",
+    "aggregate_type",
+    "aggregate_id",
+    "event_type",
+    "schema_version",
+    "occurred_at",
+    "trace_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "aggregate_type": { "type": "string", "minLength": 1 },
+    "aggregate_id": { "type": "string", "format": "uuid" },
+    "event_type": {
+      "enum": [
+        "asset.uploaded", "asset.ready", "asset.quarantined",
+        "analysis.started", "analysis.completed", "analysis.partial",
+        "storyboard.proposed", "storyboard.reviewed", "storyboard.accepted",
+        "proposal.created", "proposal.reviewed", "proposal.superseded",
+        "timeline.version.created",
+        "render.requested", "render.completed",
+        "qa.completed",
+        "review.requested", "review.decided", "review.expired",
+        "delivery.completed",
+        "task.failed", "task.cancelled"
+      ]
+    },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string", "minLength": 1 },
+    "payload": { "type": "object" }
+  }
+}

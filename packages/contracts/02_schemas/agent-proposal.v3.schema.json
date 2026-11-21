@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:agent-proposal:v3",
+  "title": "Agent Proposal v3.0 (Unified HITL Permission & Single-Use Approval Binding)",
+  "description": "Explainable, diffable batch of v3.0 EditOperations proposed by an AI Agent or user against a specific immutable timeline version and checksum. Enforces L0-L3 permissions, snake_case lifecycle states, and atomic single-use ApprovalToken binding on apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "tenant_id",
+    "project_id",
+    "timeline_id",
+    "base_version",
+    "base_timeline_checksum",
+    "status",
+    "agent_permission_level",
+    "actor",
+    "originating_request_id",
+    "rationale",
+    "risk_level",
+    "evidence_refs",
+    "operations",
+    "impact_summary",
+    "proposal_checksum",
+    "expires_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "3.0" },
+    "proposal_id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "timeline_id": { "type": "string", "format": "uuid" },
+    "base_version": { "type": "integer", "minimum": 1 },
+    "base_timeline_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "result_version": { "type": ["integer", "null"], "minimum": 2 },
+    "status": {
+      "enum": [
+        "draft",
+        "submitted",
+        "reviewing",
+        "approved",
+        "applied",
+        "rejected",
+        "revision_requested",
+        "conflicted",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "agent_permission_level": {
+      "enum": ["L1", "L2", "L3"],
+      "description": "L0 (read-only) is structurally forbidden from creating or mutating proposals; only L1 (propose), L2 (scoped execute), and L3 (controlled automation) may author proposals."
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "enum": ["user", "agent", "system"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "originating_user_id": { "type": ["string", "null"], "format": "uuid" },
+    "originating_request_id": { "type": "string", "format": "uuid" },
+    "user_intent": { "type": ["string", "null"], "maxLength": 2000 },
+    "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "risk_level": { "enum": ["low", "medium", "high", "critical"] },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation_id", "operation_type", "payload"],
+        "properties": {
+          "operation_id": { "type": "string", "format": "uuid" },
+          "operation_type": {
+            "enum": [
+              "ADD_CLIP", "REMOVE_CLIP", "TRIM_CLIP", "MOVE_CLIP", "SPLIT_CLIP",
+              "MERGE_CLIP", "REORDER_CLIP", "UPDATE_TRANSFORM", "UPDATE_PLAYBACK_RATE",
+              "UPDATE_VOLUME", "ADD_SUBTITLE", "UPDATE_SUBTITLE", "REMOVE_SUBTITLE",
+              "ADD_TRANSITION", "REMOVE_TRANSITION", "ADD_OVERLAY", "REMOVE_OVERLAY",
+              "SET_CANVAS_PROFILE", "ADD_KEYFRAME", "APPLY_EFFECT", "ADD_MARKER"
+            ]
+          },
+          "payload": { "type": "object" },
+          "reason": { "type": "string", "maxLength": 2000 },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "risk_level": { "enum": ["low", "medium", "high", "critical"] },
+          "reversible": { "type": "boolean", "default": true }
+        }
+      }
+    },
+    "diff": { "type": "object" },
+    "impact_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_delta_ticks", "clips_affected", "subtitles_affected", "reversible"],
+      "properties": {
+        "duration_delta_ticks": { "type": "integer" },
+        "clips_affected": { "type": "integer", "minimum": 0 },
+        "subtitles_affected": { "type": "integer", "minimum": 0 },
+        "reversible": { "type": "boolean" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "proposal_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "approval_token_binding": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "token_id",
+        "tenant_id",
+        "project_id",
+        "proposal_id",
+        "timeline_version",
+        "proposal_checksum",
+        "timeline_checksum",
+        "issued_to_user_id",
+        "expires_at",
+        "single_use",
+        "atomic_transaction_required"
+      ],
+      "properties": {
+        "token_id": { "type": "string", "format": "uuid" },
+        "tenant_id": { "type": "string", "format": "uuid" },
+        "project_id": { "type": "string", "format": "uuid" },
+        "proposal_id": { "type": "string", "format": "uuid" },
+        "timeline_version": { "type": "integer", "minimum": 1 },
+        "proposal_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "timeline_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "issued_to_user_id": { "type": "string", "format": "uuid" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "consumed_at": { "type": ["string", "null"], "format": "date-time" },
+        "single_use": { "const": true },
+        "atomic_transaction_required": { "const": true }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "applied" } } },
+      "then": {
+        "required": ["result_version", "approval_token_binding"],
+        "properties": {
+          "result_version": { "type": "integer", "minimum": 2 },
+          "approval_token_binding": {
+            "type": "object",
+            "required": ["consumed_at"],
+            "properties": {
+              "consumed_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

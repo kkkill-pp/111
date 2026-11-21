@@ -1,0 +1,82 @@
+name: Sprint 0 & v3.0 Protocol Freeze — PostgreSQL 15+ & Contract Gate
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  contract-and-db-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci_password
+          POSTGRES_DB: aivs_sprint0_empty
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies, ffmpeg, CJK fonts & postgresql-client
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk fontconfig postgresql-client
+          pip install -r requirements.txt
+
+      - name: License Redline Guard (LIC-001 — forbid cloud/ and ultralytics)
+        run: |
+          set -euo pipefail
+          if [ -d "cloud" ]; then echo "FORBIDDEN: cloud/ directory present"; exit 1; fi
+          if grep -iE "ultralytics|yolov8" requirements.txt; then echo "FORBIDDEN: ultralytics dependency"; exit 1; fi
+
+      - name: Verify Shell Scripts Syntax & TypeScript Types Sync
+        run: |
+          set -euo pipefail
+          bash -n migrations/verify_all_pg15.sh
+          bash -n packages/contracts/01_database/verify_all_pg15.sh
+          python3 scripts/generate_ts_types.py
+          git diff --exit-code packages/shared-types/src/v3-contracts.ts || (echo "TS types out of sync with v3.0 JSON Schemas"; exit 1)
+
+      - name: Run v3.0 + HITL v2.2 Cross-Contract Verification (61 checks)
+        run: |
+          set -euo pipefail
+          mkdir -p ci_logs
+          python3 packages/contracts/09_tests_and_adr/verify_contracts.py 2>&1 | tee ci_logs/contract_verify.log
+
+      - name: Sprint 0 & CR-001 Blocking Gate — Empty PG15+ Migrations (000..007) + Seeded RLS + FI-1/FI-2/FI-3 + Rollback Round-Trip
+        env:
+          DATABASE_URL: postgres://postgres:postgres_ci_password@localhost:5432/aivs_sprint0_empty
+        run: |
+          set -euo pipefail
+          bash migrations/verify_all_pg15.sh 2>&1 | tee ci_logs/sprint0_pg15_raw.log
+
+      - name: Run Full Automated Test Suite (OpenShorts Adapter + Vertical Slice + Time Semantics v3)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v 2>&1 | tee ci_logs/automated_tests.log
+
+      - name: Upload Raw Sprint 0 & Protocol Freeze Logs as CI Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3-protocol-freeze-and-pg15-logs
+          path: ci_logs/

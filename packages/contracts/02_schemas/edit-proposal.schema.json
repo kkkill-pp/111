@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:edit-proposal:v2",
+  "title": "Edit Proposal v2 (HITL Batch)",
+  "description": "Explainable, diffable batch of EditOperations proposed against a specific immutable timeline base_version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "proposal_id",
+    "timeline_id",
+    "base_version",
+    "status",
+    "actor",
+    "originating_request_id",
+    "rationale",
+    "risk_level",
+    "evidence_refs",
+    "operations",
+    "impact_summary",
+    "proposal_checksum"
+  ],
+  "properties": {
+    "proposal_id": { "type": "string", "format": "uuid" },
+    "timeline_id": { "type": "string", "format": "uuid" },
+    "base_version": { "type": "integer", "minimum": 1 },
+    "result_version": { "type": ["integer", "null"], "minimum": 2 },
+    "status": {
+      "enum": ["draft", "validating", "awaiting_review", "approved", "applied", "rejected", "expired", "superseded", "invalid"]
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "enum": ["user", "agent", "system"] },
+        "id": { "type": "string" }
+      }
+    },
+    "originating_user_id": { "type": ["string", "null"], "format": "uuid" },
+    "originating_request_id": { "type": "string", "format": "uuid" },
+    "user_intent": { "type": ["string", "null"], "maxLength": 2000 },
+    "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "risk_level": { "enum": ["low", "medium", "high", "critical"] },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "operations": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+    "diff": { "type": "object" },
+    "impact_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_delta_ticks", "clips_affected", "subtitles_affected", "reversible"],
+      "properties": {
+        "duration_delta_ticks": { "type": "integer" },
+        "clips_affected": { "type": "integer", "minimum": 0 },
+        "subtitles_affected": { "type": "integer", "minimum": 0 },
+        "reversible": { "type": "boolean" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "proposal_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

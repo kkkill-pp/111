@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:asset:v2.1",
+  "title": "Media Asset v2.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "tenant_id", "project_id", "kind", "status",
+    "original_filename", "storage_key", "size_bytes", "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "upload_session_id": { "type": ["string", "null"], "format": "uuid" },
+    "kind": { "enum": ["video", "audio", "image"] },
+    "status": {
+      "enum": [
+        "uploading", "uploaded", "probing", "ready",
+        "analyzing", "analyzed", "failed", "quarantined", "deleted"
+      ]
+    },
+    "original_filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "storage_key": { "type": "string", "minLength": 1 },
+    "checksum_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "size_bytes": { "type": "integer", "minimum": 0 },
+    "duration_num": { "type": ["integer", "null"], "minimum": 0 },
+    "duration_den": { "type": ["integer", "null"], "minimum": 1 },
+    "is_vfr": { "type": ["boolean", "null"] },
+    "probe_summary": { "type": ["object", "null"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

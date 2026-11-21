@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:delivery:v2.1",
+  "title": "Artifact Delivery v2.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "tenant_id", "project_id", "artifact_id", "artifact_checksum",
+    "qa_report_id", "human_review_id", "destination_type", "status", "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "artifact_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "qa_report_id": { "type": "string", "format": "uuid" },
+    "human_review_id": { "type": "string", "format": "uuid" },
+    "destination_type": { "enum": ["signed_download", "webhook", "s3_export", "social_platform"] },
+    "destination_config": { "type": "object" },
+    "status": { "enum": ["blocked", "ready", "running", "delivered", "failed", "cancelled", "revoked"] },
+    "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 200 },
+    "delivered_at": { "type": ["string", "null"], "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

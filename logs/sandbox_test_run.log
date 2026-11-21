@@ -1,0 +1,69 @@
+=== [1/3] HITL v2.2 Contract Verification ===
+=== HITL v2.2 CROSS-CONTRACT VERIFICATION REPORT ===
+[PASS] Found all 13 standalone JSON Schemas in 02_schemas/
+[PASS] JSON Schema Draft 2020-12 valid: artifact.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: asset.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: creative-brief.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: delivery.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: domain-event.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: edit-operation.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: edit-proposal.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: human-review.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: qa-report.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: render-plan.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: storyboard.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: task.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: timeline.schema.json
+[PASS] EditOperation positive test passed (TRIM_CLIP)
+[PASS] EditOperation negative test passed: UNDO rejected from EditOperation
+[PASS] EditOperation negative test passed: TRIM_CLIP missing new_source_in rejected
+[PASS] YAML valid: 03_openapi/openapi.yaml
+[PASS] YAML valid: 04_agent/human-in-the-loop-policy.yaml
+[PASS] YAML valid: 04_agent/permission-matrix.yaml
+[PASS] YAML valid: 04_agent/tool-contracts.yaml
+[PASS] YAML valid: 07_task_engine/pipeline.yaml
+[PASS] YAML valid: 09_tests_and_adr/golden-media-spec.yaml
+[PASS] Unified plural review endpoint present: POST /storyboards/{storyboard_id}/reviews
+[PASS] Unified plural review endpoint present: POST /proposals/{proposal_id}/reviews
+[PASS] Unified plural review endpoint present: POST /artifacts/{artifact_id}/reviews
+[PASS] OpenAPI 3.1 all $refs resolved across 34 paths
+[PASS] Zero loose untyped `type: object` 2xx responses in OpenAPI 3.1
+[PASS] All OpenAPI endpoints declare x-required-roles RBAC metadata
+[PASS] All mutating OpenAPI endpoints enforce Idempotency-Key
+[PASS] 3-way EditOperation enum parity verified (18 canonical ops across SQL/Schema/OpenAPI)
+[PASS] 3-way Task.status enum parity verified
+[PASS] 3-way HumanReview.status enum parity verified
+[PASS] 3-way Asset.status enum parity verified
+[PASS] PostgreSQL SELECT clause order verified: LIMIT 1 FOR UPDATE SKIP LOCKED
+[PASS] Real-time expiry + owner/token + serialization guard verified in heartbeat_task_with_fencing()
+[PASS] Real-time expiry + owner/token + serialization guard verified in complete_task_with_fencing()
+[PASS] Real-time expiry + owner/token + serialization guard verified in fail_task_with_fencing()
+[PASS] Real-time expiry + owner/token + serialization guard verified in confirm_cancel_with_fencing()
+[PASS] Real-time expiry + owner/token + serialization guard verified in publish_artifact_with_fencing()
+[PASS] Real-time expiry + owner/token + serialization guard verified in record_usage_with_fencing()
+[PASS] Cross-tenant scheduler SECURITY DEFINER isolation verified (task_scheduler_role)
+[PASS] GPU VRAM, NVENC, and worker concurrency scheduling verified in claim_next_task()
+[PASS] FORCE RLS parity verified across all 39 tenant-owned tables
+[PASS] Zero single-column FKs to tenant-owned tables (100% composite tenant_id FKs)
+[PASS] claim_next_task rejects invalid lease durations
+[PASS] Approval token is single-use, user-bound, review-approved, proposal-bound, and locked
+Total checks: 47, Passed: 47, Failed: 0
+
+=== [2/3] Manifest SHA-256 Byte-Identity Check ===
+manifest SHA-256 check: ok=45 mismatch=0
+
+=== [3/3] Full Automated Test Suite (OpenShortsAdapter + Vertical Slice E2E) ===
+/opt/spark/local/lib/python3.11/dist-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+test_license_redline_zero_cloud_and_zero_ultralytics (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_license_redline_zero_cloud_and_zero_ultralytics) ... ok
+test_vendored_clip_selection_and_ffmpeg_utils (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_clip_selection_and_ffmpeg_utils) ... ok
+test_vendored_frame_sampler_and_commercial_safe_person_detector (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_frame_sampler_and_commercial_safe_person_detector) ... ok
+test_vendored_ssrf_guard_blocks_internal_and_metadata_ips (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_ssrf_guard_blocks_internal_and_metadata_ips) ... ok
+test_full_hitl_vertical_slice_with_real_subtitle_burnin_and_honest_qa (test_vertical_slice_e2e.VerticalSliceE2ETest.test_full_hitl_vertical_slice_with_real_subtitle_burnin_and_honest_qa) ... ok
+test_renderer_forbids_silent_semantic_fallback_and_applies_speed (test_vertical_slice_e2e.VerticalSliceE2ETest.test_renderer_forbids_silent_semantic_fallback_and_applies_speed)
+P0-A regression test: unimplemented overlay/transition MUST fail loudly; speed MUST take effect. ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 4.879s
+
+OK

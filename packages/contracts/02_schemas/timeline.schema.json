@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:timeline:v2",
+  "title": "Canonical Timeline v2",
+  "description": "Immutable snapshot representation of a versioned multi-track timeline using rational timebases.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "timeline_id",
+    "project_id",
+    "version",
+    "profile",
+    "tracks"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "timeline_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "version": { "type": "integer", "minimum": 1 },
+    "parent_version": { "type": ["integer", "null"], "minimum": 1 },
+    "profile": { "$ref": "#/$defs/profile" },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/track" }
+    },
+    "metadata": { "type": "object" }
+  },
+  "$defs": {
+    "rational": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["num", "den"],
+      "properties": {
+        "num": { "type": "integer", "minimum": 1 },
+        "den": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "frame_rate", "timeline_timebase", "audio_sample_rate"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 16, "multipleOf": 2 },
+        "height": { "type": "integer", "minimum": 16, "multipleOf": 2 },
+        "frame_rate": { "$ref": "#/$defs/rational" },
+        "timeline_timebase": {
+          "$ref": "#/$defs/rational",
+          "description": "Rational unit (e.g. 1/30000 s) governing all timeline_start and duration tick integers."
+        },
+        "audio_sample_rate": { "type": "integer", "enum": [44100, 48000] },
+        "pixel_aspect_ratio": { "$ref": "#/$defs/rational" },
+        "aspect_preset": { "enum": ["9:16", "16:9", "1:1", "custom"] }
+      }
+    },
+    "source_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["in", "out", "timebase"],
+      "description": "Half-open interval [in, out) in source media timebase. Service MUST enforce out > in.",
+      "properties": {
+        "in": { "type": "integer", "minimum": 0 },
+        "out": { "type": "integer", "minimum": 1 },
+        "timebase": { "$ref": "#/$defs/rational" },
+        "vfr_pts_map_ref": { "type": ["string", "null"] }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "duration_ticks", "position"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "type": { "enum": ["cut", "fade_in", "fade_out", "crossfade"] },
+        "duration_ticks": { "type": "integer", "minimum": 0 },
+        "position": { "enum": ["in", "out", "between"] }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "asset_id", "source_range", "timeline_start", "duration", "speed"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "asset_id": { "type": "string", "format": "uuid" },
+        "source_range": { "$ref": "#/$defs/source_range" },
+        "timeline_start": { "type": "integer", "minimum": 0 },
+        "duration": { "type": "integer", "minimum": 1 },
+        "speed": { "type": "number", "minimum": 0.25, "maximum": 4.0 },
+        "transform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": {
+              "enum": ["fit", "fill", "manual", "face_track", "split", "screencast", "wide", "inset", "general"]
+            },
+            "scale": { "type": "number", "minimum": 0.1, "maximum": 10.0 },
+            "position_x": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "position_y": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "crop_override_json": { "type": ["object", "null"] }
+          }
+        },
+        "audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "volume": { "type": "number", "minimum": 0.0, "maximum": 4.0 },
+            "fade_in_ticks": { "type": "integer", "minimum": 0 },
+            "fade_out_ticks": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "subtitle_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "timeline_start", "duration", "text"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "timeline_start": { "type": "integer", "minimum": 0 },
+        "duration": { "type": "integer", "minimum": 1 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "speaker_label": { "type": ["string", "null"] },
+        "style_preset": { "type": "string", "default": "default" },
+        "safe_zone": { "enum": ["bottom", "center_seam", "top"], "default": "bottom" },
+        "word_timings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["word", "start_tick", "end_tick"],
+            "properties": {
+              "word": { "type": "string" },
+              "start_tick": { "type": "integer", "minimum": 0 },
+              "end_tick": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "overlay_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "timeline_start", "duration"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "kind": { "enum": ["text_hook", "image", "logo", "lower_third"] },
+        "timeline_start": { "type": "integer", "minimum": 0 },
+        "duration": { "type": "integer", "minimum": 1 },
+        "asset_id": { "type": ["string", "null"], "format": "uuid" },
+        "text": { "type": ["string", "null"], "maxLength": 200 },
+        "position_x": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "position_y": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "scale": { "type": "number", "minimum": 0.05, "maximum": 5.0 },
+        "opacity": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    },
+    "track": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "order", "clips"],
+          "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "type": { "enum": ["video", "audio"] },
+            "order": { "type": "integer", "minimum": 0 },
+            "muted": { "type": "boolean", "default": false },
+            "clips": { "type": "array", "items": { "$ref": "#/$defs/clip" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "order", "items"],
+          "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "type": { "const": "subtitle" },
+            "order": { "type": "integer", "minimum": 0 },
+            "items": { "type": "array", "items": { "$ref": "#/$defs/subtitle_item" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "order", "items"],
+          "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "type": { "const": "overlay" },
+            "order": { "type": "integer", "minimum": 0 },
+            "items": { "type": "array", "items": { "$ref": "#/$defs/overlay_item" } }
+          }
+        }
+      ]
+    }
+  }
+}

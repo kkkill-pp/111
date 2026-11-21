@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:task:v2.1",
+  "title": "Background Task v2.1",
+  "description": "Canonical representation of a PostgreSQL-backed asynchronous task with Fencing Token and GPU resource requirements.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "tenant_id", "task_type", "status", "priority",
+    "attempt", "max_attempts", "lease_token", "resource_requirements",
+    "idempotency_key", "created_at", "updated_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": ["string", "null"], "format": "uuid" },
+    "workflow_run_id": { "type": ["string", "null"], "format": "uuid" },
+    "task_type": {
+      "enum": [
+        "asset_probe", "proxy_generate", "thumbnail_generate",
+        "asr_transcribe", "scene_detect", "keyframe_sample",
+        "person_detect", "vision_analyze", "semantic_fuse",
+        "candidate_generate", "storyboard_generate",
+        "preview_render", "final_render", "qa_check", "delivery", "cleanup"
+      ]
+    },
+    "status": {
+      "enum": [
+        "pending", "queued", "claimed", "running", "retry_wait",
+        "succeeded", "failed", "cancel_requested", "cancelled", "blocked", "expired"
+      ]
+    },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "attempt": { "type": "integer", "minimum": 0 },
+    "max_attempts": { "type": "integer", "minimum": 1 },
+    "lease_token": { "type": "integer", "minimum": 0 },
+    "lease_owner": { "type": ["string", "null"] },
+    "lease_expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "heartbeat_at": { "type": ["string", "null"], "format": "date-time" },
+    "next_retry_at": { "type": ["string", "null"], "format": "date-time" },
+    "resource_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pool", "required_gpu_memory_mb", "required_nvenc"],
+      "properties": {
+        "pool": { "enum": ["cpu", "gpu", "qa", "delivery", "general"] },
+        "required_gpu_memory_mb": { "type": "integer", "minimum": 0 },
+        "required_nvenc": { "type": "boolean" },
+        "max_runtime_sec": { "type": "integer", "minimum": 10 }
+      }
+    },
+    "payload": { "type": "object" },
+    "result": { "type": ["object", "null"] },
+    "last_error": { "type": ["object", "null"] },
+    "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 200 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}
