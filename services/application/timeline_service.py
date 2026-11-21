@@ -317,6 +317,28 @@ class TimelineService:
                             changes.append({"operation_id": op["operation_id"], "type": otype, "subtitle_id": payload["subtitle_id"]})
                 if not removed:
                     raise AppError(422, "VALIDATION_ERROR", f"Subtitle {payload['subtitle_id']} not found")
+            elif otype == "UPDATE_TRANSFORM":
+                clip = self._find_clip(next_snap, payload["clip_id"])
+                tr_cfg = dict(clip.get("transform") or {"mode": "fit"})
+                tr_cfg.update(payload["transform"])
+                clip["transform"] = tr_cfg
+                clips_affected += 1
+                changes.append({"operation_id": op["operation_id"], "type": otype, "clip_id": clip["id"], "transform": tr_cfg})
+            elif otype == "REORDER_CLIP":
+                tr = next((t for t in next_snap["tracks"] if t["id"] == payload["track_id"] and t["type"] in ("video", "audio")), None)
+                if not tr:
+                    raise AppError(422, "VALIDATION_ERROR", f"Track {payload['track_id']} not found")
+                by_id = {c["id"]: c for c in tr["clips"]}
+                ordered = [by_id[cid] for cid in payload["ordered_clip_ids"] if cid in by_id]
+                if len(ordered) != len(payload["ordered_clip_ids"]):
+                    raise AppError(422, "VALIDATION_ERROR", "REORDER_CLIP contains unknown clip_id")
+                cursor = 0
+                for c in ordered:
+                    c["timeline_start"] = cursor
+                    cursor += c["duration"]
+                tr["clips"] = ordered
+                clips_affected += len(ordered)
+                changes.append({"operation_id": op["operation_id"], "type": otype, "track_id": tr["id"], "ordered_clip_ids": payload["ordered_clip_ids"]})
             else:
                 raise AppError(
                     422,

@@ -1,9 +1,12 @@
 /opt/spark/local/lib/python3.11/dist-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
   from starlette.testclient import TestClient as TestClient  # noqa
+test_standalone_audio_track_mixes_via_amix_and_respects_volume (test_multitrack_audio_amix.MultiTrackAudioAmixTest.test_standalone_audio_track_mixes_via_amix_and_respects_volume) ... ok
 test_license_redline_zero_cloud_and_zero_ultralytics (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_license_redline_zero_cloud_and_zero_ultralytics) ... ok
 test_vendored_clip_selection_and_ffmpeg_utils (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_clip_selection_and_ffmpeg_utils) ... ok
 test_vendored_frame_sampler_and_commercial_safe_person_detector (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_frame_sampler_and_commercial_safe_person_detector) ... ok
 test_vendored_ssrf_guard_blocks_internal_and_metadata_ips (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_ssrf_guard_blocks_internal_and_metadata_ips) ... ok
+test_live_pg15_full_upload_edit_split_export_qa_and_download (test_pg_store_integration.PostgresStoreLivePG15Test.test_live_pg15_full_upload_edit_split_export_qa_and_download)
+Closes run#6 §7 reservation: full Upload -> Multi-Track Split/Subtitle -> FFmpeg 1080p Export -> ffprobe+Visual QA -> Download on REAL PostgreSQL 15. ... skipped 'Set DATABASE_URL to run live PostgreSQL 15+ psycopg persistence & RLS tests'
 test_live_pg15_http_api_e2e_workspace_project_timeline_undo_redo_and_fk_409 (test_pg_store_integration.PostgresStoreLivePG15Test.test_live_pg15_http_api_e2e_workspace_project_timeline_undo_redo_and_fk_409)
 Real HTTP API -> FastAPI -> PostgresTenantStore -> PostgreSQL 15 E2E (RLS + Optimistic Lock + Undo/Redo + 409 FK). ... skipped 'Set DATABASE_URL to run live PostgreSQL 15+ psycopg persistence & RLS tests'
 test_live_pg15_rls_isolation_render_plan_immutability_and_atomic_token (test_pg_store_integration.PostgresStoreLivePG15Test.test_live_pg15_rls_isolation_render_plan_immutability_and_atomic_token) ... skipped 'Set DATABASE_URL to run live PostgreSQL 15+ psycopg persistence & RLS tests'
@@ -13,6 +16,8 @@ test_phase1_multitrack_split_move_subtitle_optimistic_lock_undo_redo_and_final_e
 Full Phase 1 human multi-track editing loop: Upload -> Split -> Move -> Subtitle CRUD -> 409 Lock -> Undo -> Redo -> Final 1080p Export -> QA. ... ok
 test_pixel_level_subtitle_burnin_and_afade_reachability (test_phase1_multitrack_and_pixels.Phase1MultiTrackAndPixelsTest.test_pixel_level_subtitle_burnin_and_afade_reachability)
 Closes v5 §4.1 (afade reachable) and §4.2 (pixel-level subtitle visibility on identical duration clips). ... ok
+test_fencing_worker_validates_lease_bounds_and_propagates_stale_rejection (test_phase2_agent_hitl_and_worker.Phase2AgentAndWorkerTest.test_fencing_worker_validates_lease_bounds_and_propagates_stale_rejection) ... ok
+test_l0_agent_blocked_irreversible_guard_and_visual_inspect_endpoint (test_phase2_agent_hitl_and_worker.Phase2AgentAndWorkerTest.test_l0_agent_blocked_irreversible_guard_and_visual_inspect_endpoint) ... ok
 test_ffmpeg_export_duration_matches_rational_ticks (test_time_semantics_v3.TestTimeSemanticsV3.test_ffmpeg_export_duration_matches_rational_ticks)
 Real FFmpeg + ffprobe check: 4.0s source at 2.0x playback_rate with exact tick-bounded -t exports 2.00s. ... ok
 test_rational_exact_math_standard_and_ntsc_framerates (test_time_semantics_v3.TestTimeSemanticsV3.test_rational_exact_math_standard_and_ntsc_framerates) ... ok
@@ -24,8 +29,9 @@ test_renderer_forbids_silent_semantic_fallback_and_applies_speed (test_vertical_
 P0-A regression test: unimplemented overlay/transition MUST fail loudly; speed MUST take effect. ... ok
 test_timeline_service_rejects_unimplemented_ops_and_applies_volume (test_vertical_slice_e2e.VerticalSliceE2ETest.test_timeline_service_rejects_unimplemented_ops_and_applies_volume)
 P0 §2.1 regression: unimplemented ops MUST fail 422 (zero silent no-ops); UPDATE_VOLUME mutates snapshot. ... ok
+test_catches_all_black_video_as_blocker_and_exports_snapshots_for_visible_video (test_visual_frame_inspector.VisualFrameInspectorTest.test_catches_all_black_video_as_blocker_and_exports_snapshots_for_visible_video) ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 7.785s
+Ran 22 tests in 10.929s
 
-OK (skipped=2)
+OK (skipped=3)

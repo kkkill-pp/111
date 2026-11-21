@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EditOperationInputV3,
   SubtitleItemV3,
   TimelineV3,
   VideoClipV3,
 } from "../../../packages/shared-types/src/v3-contracts";
+import { AgentProposalPanel } from "./components/AgentProposalPanel";
 import { TimelineCanvas } from "./components/TimelineCanvas";
 import {
   type ApiConnectionConfig,
@@ -113,7 +114,11 @@ export function App(): React.ReactElement {
   const [zoomPxPerSec, setZoomPxPerSec] = useState<number>(90);
   const [snapEnabled, setSnapEnabled] = useState<boolean>(true);
   const [rippleEnabled, setRippleEnabled] = useState<boolean>(false);
-  const [statusLog, setStatusLog] = useState<string>("就绪（本地演示模式；可勾选连接后端 API 实跑 FFmpeg 渲染）");
+  const [rightTab, setRightTab] = useState<"inspector" | "agent">("inspector");
+  const [statusLog, setStatusLog] = useState<string>("就绪（支持导入本地 MP4 实时预览；勾选连接后端可实跑 FFmpeg 导出与下载）");
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [apiCfg, setApiCfg] = useState<ApiConnectionConfig>({
     enabled: false,
     apiBase: "/api/v1",
@@ -125,6 +130,21 @@ export function App(): React.ReactElement {
   const current = history[historyIdx];
   const timeline = current.timeline;
   const tb = timeline.time_semantics.timeline_timebase;
+
+  // Sync HTML5 <video> element with rational playheadTick
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !videoUrl) return;
+    const targetSec = ticksToSeconds(playheadTick, tb);
+    if (Math.abs(v.currentTime - targetSec) > 0.08) {
+      v.currentTime = targetSec;
+    }
+    if (isPlaying && v.paused) {
+      void v.play().catch(() => {});
+    } else if (!isPlaying && !v.paused) {
+      v.pause();
+    }
+  }, [playheadTick, isPlaying, videoUrl, tb]);
 
   // Playback loop
   useEffect(() => {
@@ -269,6 +289,7 @@ export function App(): React.ReactElement {
     setStatusLog(`正在提交 ${mode} FFmpeg 渲染与 ffprobe QA...`);
     try {
       const res = await triggerRenderAndQa(apiCfg, timeline.timeline_id, timeline.version, mode);
+      setDownloadUrl(`${apiCfg.apiBase}/artifacts/${res.artifact_id}/download`);
       setStatusLog(`导出完成 (${mode}): artifact=${res.artifact_id.slice(0, 8)} · QA=${res.qa_status}`);
     } catch (err) {
       setStatusLog(`渲染失败: ${(err as Error).message}`);
@@ -311,6 +332,23 @@ export function App(): React.ReactElement {
       <main style={{ display: "grid", gridTemplateColumns: "250px 1fr 290px", borderBottom: "1px solid #1E293B", overflow: "hidden" }}>
         {/* Left: Assets, Quick Add & Immutable Version History */}
         <aside style={{ padding: 12, borderRight: "1px solid #1E293B", overflowY: "auto" }}>
+          <h4 style={{ margin: "0 0 8px", fontSize: 13 }}>导入本地媒体</h4>
+          <input
+            type="file"
+            accept="video/*,audio/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              setVideoUrl(URL.createObjectURL(f));
+              setStatusLog(`已载入本地视频: ${f.name} (${(f.size / 1048576).toFixed(2)} MB)`);
+            }}
+            style={{ width: "100%", fontSize: 11, marginBottom: 14 }}
+          />
+          {downloadUrl && (
+            <a href={downloadUrl} download style={{ display: "block", marginBottom: 12, padding: "6px 8px", background: "#059669", color: "#fff", borderRadius: 4, textAlign: "center", fontSize: 12, textDecoration: "none" }}>
+              ⬇ 下载导出成片 (MP4)
+            </a>
+          )}
           <h4 style={{ margin: "0 0 8px", fontSize: 13 }}>快捷插入</h4>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
             <button
@@ -372,12 +410,16 @@ export function App(): React.ReactElement {
               overflow: "hidden",
             }}
           >
+            {videoUrl ? (
+              <video ref={videoRef} src={videoUrl} muted={false} playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            ) : (
             <div style={{ textAlign: "center", color: "#94A3B8", fontSize: 12 }}>
               <div>9:16 预览画布 ({timeline.profile.width}×{timeline.profile.height})</div>
               <div style={{ marginTop: 6, fontSize: 18, fontFamily: "monospace", color: "#F8FAFC" }}>
                 {formatTimecode(playheadTick, tb, DEFAULT_FPS)}
               </div>
             </div>
+            )}
             {/* Live ASS-style Subtitle Overlay */}
             {activeSubtitles.map((s) => (
               <div
@@ -413,7 +455,24 @@ export function App(): React.ReactElement {
 
         {/* Right: Inspector Panel */}
         <aside style={{ padding: 12, borderLeft: "1px solid #1E293B", overflowY: "auto" }}>
-          <h4 style={{ margin: "0 0 10px", fontSize: 13 }}>属性检查器</h4>
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            <button onClick={() => setRightTab("inspector")} style={{ flex: 1, background: rightTab === "inspector" ? "#1D4ED8" : "#1E293B", color: "#fff", border: "none", padding: "5px 6px", borderRadius: 4, fontSize: 12 }}>
+              属性检查器
+            </button>
+            <button onClick={() => setRightTab("agent")} style={{ flex: 1, background: rightTab === "agent" ? "#4F46E5" : "#1E293B", color: "#fff", border: "none", padding: "5px 6px", borderRadius: 4, fontSize: 12 }}>
+              🤖 AI 提案审阅
+            </button>
+          </div>
+          {rightTab === "agent" ? (
+            <AgentProposalPanel
+              timeline={timeline}
+              apiCfg={apiCfg}
+              onApplyLocalOps={(ops, label) => {
+                for (const op of ops) void executeOp(op, label);
+              }}
+              onStatus={setStatusLog}
+            />
+          ) : (<>
           {selectedClip && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12 }}>
               <div>片段 ID: <code>{selectedClip.id.slice(0, 8)}</code></div>
@@ -471,6 +530,7 @@ export function App(): React.ReactElement {
           )}
 
           {!selectedClip && !selectedSub && <p style={{ fontSize: 12, color: "#64748B" }}>在下方时间线点击任意片段或字幕以编辑属性。</p>}
+          </>)}
 
           <div style={{ marginTop: 18, padding: 8, background: "#0B1120", borderRadius: 6, fontSize: 11, color: "#94A3B8" }}>
             <strong style={{ color: "#E2E8F0" }}>状态日志</strong>

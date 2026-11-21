@@ -23,6 +23,10 @@ from services.infrastructure.store import TenantContext, iso_now, utcnow
 ALLOWED_TABLES = frozenset({
     "workspaces",
     "projects",
+    "upload_sessions",
+    "assets",
+    "media_probes",
+    "analysis_runs",
     "timelines",
     "timeline_versions",
     "edit_proposals",
@@ -31,6 +35,7 @@ ALLOWED_TABLES = frozenset({
     "render_plans",
     "artifacts",
     "qa_reports",
+    "deliveries",
     "audit_events",
 })
 
@@ -265,9 +270,95 @@ class PostgresTenantStore:
                             record.get("created_by_lease_token", 1),
                         ),
                     )
+                elif table == "upload_sessions":
+                    cur.execute(
+                        """
+                        INSERT INTO public.upload_sessions (
+                          id, tenant_id, project_id, created_by, filename, kind,
+                          expected_size_bytes, storage_key, status, idempotency_key, expires_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record["created_by"],
+                            record["filename"], record["kind"], int(record.get("size_bytes", 1)),
+                            record["storage_key"], record.get("status", "initiated"),
+                            record.get("idempotency_key", f"up-{record['id']}"), record["expires_at"],
+                        ),
+                    )
+                elif table == "assets":
+                    cur.execute(
+                        """
+                        INSERT INTO public.assets (
+                          id, tenant_id, project_id, upload_session_id, kind, status,
+                          original_filename, storage_key, checksum_sha256, size_bytes,
+                          duration_num, duration_den, is_vfr, probe_json, created_by
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record.get("upload_session_id"),
+                            record["kind"], record.get("status", "ready"), record["original_filename"],
+                            record["storage_key"], record.get("checksum_sha256"), int(record.get("size_bytes", 0)),
+                            record.get("duration_num"), record.get("duration_den"), record.get("is_vfr"),
+                            self._jsonb(record.get("probe_summary", {})), record.get("created_by"),
+                        ),
+                    )
+                elif table == "media_probes":
+                    p = record.get("probe") or {}
+                    cur.execute(
+                        """
+                        INSERT INTO public.media_probes (
+                          id, tenant_id, asset_id, probe_tool_version, parser_version,
+                          container_format, duration_num, duration_den, width, height,
+                          frame_rate_num, frame_rate_den, is_vfr, audio_sample_rate,
+                          audio_channels, raw_probe_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            record["id"], tenant_id, record["asset_id"], "ffprobe", "v3.0",
+                            str(p.get("container_format", "mp4")), int(p.get("duration_num", 1)),
+                            int(p.get("duration_den", 1)), p.get("width"), p.get("height"),
+                            p.get("frame_rate_num"), p.get("frame_rate_den"), bool(p.get("is_vfr", False)),
+                            p.get("audio_sample_rate"), p.get("audio_channels"), self._jsonb(p),
+                        ),
+                    )
+                elif table == "qa_reports":
+                    cur.execute(
+                        """
+                        INSERT INTO public.qa_reports (
+                          id, tenant_id, project_id, artifact_id, status,
+                          technical_checks_json, content_checks_json, blockers_json, warnings_json, completed_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record["artifact_id"],
+                            record["status"], self._jsonb(record.get("technical_checks", [])),
+                            self._jsonb(record.get("content_checks", [])), self._jsonb(record.get("blockers", [])),
+                            self._jsonb(record.get("warnings", [])), record.get("completed_at"),
+                        ),
+                    )
+                elif table == "deliveries":
+                    cur.execute(
+                        """
+                        INSERT INTO public.deliveries (
+                          id, tenant_id, project_id, artifact_id, artifact_checksum,
+                          qa_report_id, human_review_id, destination_type, status, idempotency_key, created_by
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record["artifact_id"],
+                            record["artifact_checksum"], record["qa_report_id"], record["human_review_id"],
+                            record["destination_type"], record.get("status", "ready"),
+                            record.get("idempotency_key", f"deliv-{record['id']}"), record["created_by"],
+                        ),
+                    )
         except Exception as exc:
-            if exc.__class__.__name__ == "ForeignKeyViolation":
+            cls_names = {c.__name__ for c in type(exc).__mro__}
+            if "ForeignKeyViolation" in cls_names:
                 raise AppError(409, "FOREIGN_KEY_VIOLATION", f"Referenced parent record missing for {table} (ensure tenant/user/parent exists)") from exc
+            if "IntegrityError" in cls_names:
+                raise AppError(409, "INTEGRITY_VIOLATION", f"Database integrity constraint violated on {table}: {exc}") from exc
             raise
         return copy.deepcopy(record)
 

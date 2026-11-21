@@ -12,6 +12,7 @@ from uuid import uuid4
 from services.infrastructure.contracts import validate_against_schema
 from services.infrastructure.store import iso_now
 from services.media_engine.adapters.openshorts_adapter import OpenShortsAdapter, file_sha256
+from services.media_engine.visual_frame_inspector import VisualFrameInspector
 
 
 class QAEngine:
@@ -94,6 +95,32 @@ class QAEngine:
             }
             technical_checks.append(dec_item)
             blockers.append(dec_item)
+
+        # 2b. Real OpenCV Visual Frame Black-Screen & Subtitle-Band Pixel Check
+        try:
+            vis = VisualFrameInspector.inspect_video_frames(artifact_path)
+            all_black = vis.frames_sampled > 0 and vis.black_frames == vis.frames_sampled
+            vis_item = {
+                "code": "TECH_VISUAL_BLACK_FRAME_CHECK",
+                "severity": "blocker",
+                "passed": not all_black,
+                "message": (
+                    f"Sampled {vis.frames_sampled} frames (avg_luma={vis.avg_luma:.1f}, black={vis.black_frames})"
+                    if not all_black
+                    else f"All {vis.frames_sampled} sampled frames are black (avg_luma={vis.avg_luma:.1f})"
+                ),
+                "metrics": vis.to_dict(),
+            }
+            technical_checks.append(vis_item)
+            if all_black:
+                blockers.append(vis_item)
+        except Exception as exc:
+            technical_checks.append({
+                "code": "TECH_VISUAL_INSPECT_WARNING",
+                "severity": "warning",
+                "passed": False,
+                "message": f"Visual frame inspection error: {exc}",
+            })
 
         # 3. Deterministic subtitle metadata check + explicit NOT_IMPLEMENTED marker for AI semantic QA
         subs = render_plan.get("subtitle_ops") or []

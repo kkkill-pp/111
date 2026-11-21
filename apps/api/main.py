@@ -6,7 +6,8 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from services.agent_runtime.harness import AgentHarness
@@ -72,6 +73,7 @@ class CreateTimelineBody(BaseModel):
 class AgentProposeBody(BaseModel):
     base_version: int = Field(ge=1)
     user_intent: str = Field(min_length=1, max_length=2000)
+    permission_level: str = "L1"
 
 
 class ApplyProposalBody(BaseModel):
@@ -112,6 +114,13 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
     qa_engine = QAEngine(media_adapter)
 
     app = FastAPI(title="AI Video Studio API", version="3.0.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.store = store
     app.state.storage_backend = storage_backend
     app.state.agent_harness = agent_harness
@@ -195,6 +204,8 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
             "id": sess_id,
             "tenant_id": ctx.tenant_id,
             "project_id": project_id,
+            "created_by": ctx.user_id,
+            "idempotency_key": idem,
             "filename": body.filename,
             "kind": body.kind,
             "size_bytes": body.size_bytes,
@@ -205,6 +216,31 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
         }
         store.put("upload_sessions", rec)
         return {k: rec[k] for k in ("id", "storage_key", "upload_url", "multipart_upload_id", "expires_at")}
+
+    @app.put("/api/v1/upload-sessions/{session_id}/content", status_code=200)
+    async def upload_session_content(session_id: str, request: Request, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        sess = store.get(ctx, "upload_sessions", session_id)
+        data = await request.body()
+        if not data:
+            raise AppError(422, "VALIDATION_ERROR", "Empty upload body")
+        Path(sess["storage_key"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(sess["storage_key"]).write_bytes(data)
+        return {"session_id": session_id, "size_bytes": len(data), "checksum_sha256": file_sha256(sess["storage_key"])}
+
+    @app.get("/api/v1/assets/{asset_id}/media")
+    def stream_asset_media(asset_id: str, ctx: TenantContext = Depends(get_ctx)):
+        asset = store.get(ctx, "assets", asset_id)
+        if not os.path.exists(asset["storage_key"]):
+            raise AppError(404, "NOT_FOUND", "Asset media file not found")
+        return FileResponse(asset["storage_key"], media_type="video/mp4", filename=asset.get("original_filename", "asset.mp4"))
+
+    @app.get("/api/v1/artifacts/{artifact_id}/download")
+    def download_artifact(artifact_id: str, ctx: TenantContext = Depends(get_ctx)):
+        art = store.get(ctx, "artifacts", artifact_id)
+        if not os.path.exists(art["storage_key"]):
+            raise AppError(404, "NOT_FOUND", "Artifact file not found")
+        return FileResponse(art["storage_key"], media_type="video/mp4", filename=f"export_{artifact_id[:8]}.mp4")
 
     @app.post("/api/v1/upload-sessions/{session_id}/complete", status_code=202)
     def complete_upload(session_id: str, body: CompleteUploadBody, ctx: TenantContext = Depends(get_ctx), idem: str = Depends(get_idem_key)):
@@ -241,6 +277,7 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
             "created_at": iso_now(),
         }
         validate_against_schema("asset.schema.json", asset_rec)
+        asset_rec["created_by"] = ctx.user_id
         store.put("assets", asset_rec)
         store.put("media_probes", {"id": str(uuid4()), "tenant_id": ctx.tenant_id, "asset_id": asset_id, "probe": probe.__dict__})
         return {"asset_id": asset_id, "task_id": str(uuid4()), "status": "queued", "trace_id": ctx.trace_id}
@@ -356,7 +393,7 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
 
     @app.post("/api/v1/timelines/{timeline_id}/agent-proposals", status_code=200)
     def agent_propose(timeline_id: str, body: AgentProposeBody, ctx: TenantContext = Depends(get_ctx), idem: str = Depends(get_idem_key)):
-        return agent_harness.propose_edit_operations(ctx, timeline_id, body.base_version, body.user_intent, idem)
+        return agent_harness.propose_edit_operations(ctx, timeline_id, body.base_version, body.user_intent, idem, permission_level=body.permission_level)
 
     @app.post("/api/v1/proposals/{proposal_id}/reviews", status_code=201)
     def review_proposal(proposal_id: str, body: ReviewBody, ctx: TenantContext = Depends(get_ctx), idem: str = Depends(get_idem_key)):
@@ -448,11 +485,19 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
         store.put("artifacts", art_rec)
         return {"task_id": str(uuid4()), "render_plan_id": plan_id, "artifact_id": art_id, "artifact_checksum": rendered["checksum_sha256"], "status": "queued", "trace_id": ctx.trace_id}
 
+    @app.post("/api/v1/artifacts/{artifact_id}/visual-inspect", status_code=200)
+    def visual_inspect_artifact(artifact_id: str, ctx: TenantContext = Depends(get_ctx), idem: str = Depends(get_idem_key)):
+        require_role(ctx, ["owner", "admin", "editor", "reviewer"])
+        art = store.get(ctx, "artifacts", artifact_id)
+        snap_dir = str(Path(art["storage_key"]).parent / f"vis_{artifact_id[:8]}")
+        return agent_harness.inspect_rendered_frames(ctx, art["storage_key"], save_dir=snap_dir)
+
     @app.post("/api/v1/artifacts/{artifact_id}/qa", status_code=202)
     def run_qa(artifact_id: str, ctx: TenantContext = Depends(get_ctx), idem: str = Depends(get_idem_key)):
         require_role(ctx, ["owner", "admin", "editor", "reviewer"])
         art = store.get(ctx, "artifacts", artifact_id)
-        plan_rec = store.get(ctx, "render_plans", art["metadata"]["render_plan_id"])
+        art_meta = art.get("metadata") or art.get("metadata_json") or {}
+        plan_rec = store.get(ctx, "render_plans", art_meta["render_plan_id"])
         report = qa_engine.run_qa(artifact_id, art["storage_key"], art["checksum_sha256"], plan_rec["plan_json"])
         store.put("qa_reports", {"id": report["qa_report_id"], "tenant_id": ctx.tenant_id, "project_id": art["project_id"], **report})
         return {"task_id": str(uuid4()), "qa_report_id": report["qa_report_id"], "qa_status": report["status"], "status": "queued", "trace_id": ctx.trace_id}

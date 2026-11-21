@@ -102,6 +102,35 @@ class RenderPlanCompiler:
                         "fade_out_ticks": int(c.get("audio", {}).get("fade_out_ticks", 0) or 0),
                     })
                     expected_duration_ticks = max(expected_duration_ticks, c["timeline_start"] + effective_dur)
+            elif tr["type"] == "audio":
+                if tr.get("muted"):
+                    continue
+                for c in tr["clips"]:
+                    asset = asset_lookup[c["asset_id"]]
+                    used_assets[c["asset_id"]] = {
+                        "asset_id": asset["id"],
+                        "storage_key": asset["storage_key"],
+                        "checksum_sha256": asset["checksum_sha256"],
+                        "is_vfr": bool(asset.get("is_vfr", False)),
+                        "pts_map_storage_key": None,
+                    }
+                    speed = float(c.get("playback_rate", c.get("speed", 1.0)))
+                    effective_dur = max(1, int(round(c["duration"] / speed)))
+                    a_cfg = c.get("audio") or {}
+                    audio_ops.append({
+                        "track_type": "audio",
+                        "clip_id": c["id"],
+                        "asset_id": c["asset_id"],
+                        "source_in_tick": c["source_range"]["in"],
+                        "source_out_tick": c["source_range"]["out"],
+                        "timeline_start_tick": c["timeline_start"],
+                        "duration_ticks": effective_dur,
+                        "speed": speed,
+                        "enabled": a_cfg.get("enabled", not bool(c.get("muted", False))),
+                        "volume": float(a_cfg.get("volume", c.get("volume", 1.0))),
+                        "fade_in_ticks": int(a_cfg.get("fade_in_ticks", c.get("fade_in_ticks", 0)) or 0),
+                        "fade_out_ticks": int(a_cfg.get("fade_out_ticks", c.get("fade_out_ticks", 0)) or 0),
+                    })
             elif tr["type"] == "subtitle":
                 for item in tr["items"]:
                     subtitle_ops.append(item)
@@ -261,7 +290,7 @@ class FFmpegRendererAdapter:
             v_chain.extend([f"fps={fps_str}", "format=yuv420p"])
             filter_parts.append(f"[{idx}:v]{','.join(v_chain)}[v{idx}]")
 
-            audio_op = next((a for a in (render_plan.get("audio_ops") or []) if a.get("clip_id") == op["clip_id"]), None)
+            audio_op = next((a for a in (render_plan.get("audio_ops") or []) if a.get("clip_id") == op["clip_id"] and a.get("track_type") != "audio"), None)
             a_chain = []
             if abs(speed - 1.0) > 1e-6:
                 a_chain.append(_build_atempo_chain(speed))
@@ -286,13 +315,49 @@ class FFmpegRendererAdapter:
 
         n = len(render_plan["video_ops"])
         subtitle_ops = render_plan.get("subtitle_ops") or []
+        extra_audio_ops = [
+            a for a in (render_plan.get("audio_ops") or [])
+            if a.get("track_type") == "audio" and bool(a.get("enabled", True)) and float(a.get("volume", 1.0)) > 0.0
+        ]
+        base_audio_label = "[abase]" if extra_audio_ops else "[aout]"
+
+        extra_audio_labels: list[str] = []
+        for j, ea in enumerate(extra_audio_ops):
+            in_idx = n + j
+            ea_src = asset_paths[ea["asset_id"]]
+            ea_start_s = (ea["source_in_tick"] * tb_num) / tb_den
+            ea_dur_s = ((ea["source_out_tick"] - ea["source_in_tick"]) * tb_num) / tb_den
+            ea_speed = float(ea.get("speed", 1.0))
+            inputs.extend(["-ss", f"{ea_start_s:.6f}", "-t", f"{ea_dur_s:.6f}", "-i", ea_src])
+
+            ea_chain = []
+            if abs(ea_speed - 1.0) > 1e-6:
+                ea_chain.append(_build_atempo_chain(ea_speed))
+            ea_vol = float(ea.get("volume", 1.0))
+            if abs(ea_vol - 1.0) > 1e-6:
+                ea_chain.append(f"volume={ea_vol:.4f}")
+            fi_ticks = int(ea.get("fade_in_ticks", 0) or 0)
+            fo_ticks = int(ea.get("fade_out_ticks", 0) or 0)
+            if fi_ticks > 0:
+                ea_chain.append(f"afade=t=in:st=0:d={(fi_ticks * tb_num) / tb_den:.6f}")
+            if fo_ticks > 0:
+                eff_d = ea_dur_s / max(ea_speed, 0.25)
+                fo_d = (fo_ticks * tb_num) / tb_den
+                ea_chain.append(f"afade=t=out:st={max(0.0, eff_d - fo_d):.6f}:d={fo_d:.6f}")
+            delay_ms = int(round(((ea.get("timeline_start_tick", 0) * tb_num) / tb_den) * 1000.0))
+            if delay_ms > 0:
+                ea_chain.append(f"adelay={delay_ms}|{delay_ms}")
+            ea_chain.extend([f"aresample={out_prof['audio_sample_rate']}", "aformat=channel_layouts=stereo"])
+            lbl = f"[aextra{j}]"
+            filter_parts.append(f"[{in_idx}:a]{','.join(ea_chain)}{lbl}")
+            extra_audio_labels.append(lbl)
 
         with tempfile.TemporaryDirectory(prefix="aivs_ass_") as tmp_ass_dir:
             if subtitle_ops:
                 ass_file = Path(tmp_ass_dir) / "captions.ass"
                 self._write_ass_subtitles(subtitle_ops, out_prof["width"], out_prof["height"], tb_num, tb_den, ass_file)
                 escaped_ass = _escape_ffmpeg_filter_path(str(ass_file))
-                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vcat][aout]")
+                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vcat]{base_audio_label}")
                 fonts_dir = Path(__file__).resolve().parents[2] / "assets" / "fonts"
                 if fonts_dir.exists():
                     escaped_fonts = _escape_ffmpeg_filter_path(str(fonts_dir))
@@ -300,7 +365,11 @@ class FFmpegRendererAdapter:
                 else:
                     filter_parts.append(f"[vcat]ass='{escaped_ass}'[vout]")
             else:
-                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vout][aout]")
+                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vout]{base_audio_label}")
+
+            if extra_audio_labels:
+                mix_inputs = f"[abase]{''.join(extra_audio_labels)}"
+                filter_parts.append(f"{mix_inputs}amix=inputs={1 + len(extra_audio_labels)}:duration=first:normalize=0[aout]")
 
             cmd = [
                 "ffmpeg", "-y", "-loglevel", "error", "-threads", str(enc["threads"]),

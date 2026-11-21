@@ -186,5 +186,96 @@ class PostgresStoreLivePG15Test(unittest.TestCase):
             self.assertEqual([v["origin_command"] for v in r_vers.json()["items"]], ["init", "edit", "undo", "redo"])
 
 
+    def test_live_pg15_full_upload_edit_split_export_qa_and_download(self) -> None:
+        """Closes run#6 §7 reservation: full Upload -> Multi-Track Split/Subtitle -> FFmpeg 1080p Export -> ffprobe+Visual QA -> Download on REAL PostgreSQL 15."""
+        import subprocess
+        from pathlib import Path
+        from services.media_engine.adapters.openshorts_adapter import file_sha256
+
+        dsn = os.environ["DATABASE_URL"]
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "src_2s.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=2",
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-ac", "2", "-ar", "48000", str(sample),
+                ],
+                check=True, timeout=60,
+            )
+
+            app = create_app(media_root=tmp, database_url=dsn)
+            client = TestClient(app)
+            t_id, u_id = str(uuid4()), str(uuid4())
+            app.state.store.seed_tenant_and_user(t_id, u_id, "PG Full Loop Tenant", f"loop-{u_id[:6]}@example.com")
+
+            def hdr(role: str = "editor", idem: str | None = None) -> dict[str, str]:
+                h = {"X-Tenant-Id": t_id, "X-User-Id": u_id, "X-User-Role": role, "X-Trace-Id": f"tr-{uuid4().hex[:8]}"}
+                if idem:
+                    h["Idempotency-Key"] = idem
+                return h
+
+            ws = client.post("/api/v1/workspaces", json={"name": "PG Loop WS"}, headers=hdr("owner", f"idem-{uuid4().hex}")).json()
+            proj = client.post("/api/v1/projects", json={"workspace_id": ws["id"], "name": "PG Loop Proj"}, headers=hdr("editor", f"idem-{uuid4().hex}")).json()
+
+            # 1. Upload Session -> PUT raw bytes -> Complete (real ffprobe + PG assets/media_probes)
+            raw_bytes = sample.read_bytes()
+            up = client.post(f"/api/v1/projects/{proj['id']}/upload-sessions", json={"filename": "src_2s.mp4", "size_bytes": len(raw_bytes), "kind": "video"}, headers=hdr("editor", f"idem-{uuid4().hex}")).json()
+            r_put = client.put(f"/api/v1/upload-sessions/{up['id']}/content", content=raw_bytes, headers=hdr("editor"))
+            self.assertEqual(r_put.status_code, 200, r_put.text)
+            r_comp = client.post(f"/api/v1/upload-sessions/{up['id']}/complete", json={"checksum_sha256": file_sha256(str(sample))}, headers=hdr("editor", f"idem-{uuid4().hex}"))
+            self.assertEqual(r_comp.status_code, 202, r_comp.text)
+            asset_id = r_comp.json()["asset_id"]
+
+            # Verify browser <video> media streaming endpoint
+            r_stream = client.get(f"/api/v1/assets/{asset_id}/media", headers=hdr("editor"))
+            self.assertEqual(r_stream.status_code, 200)
+            self.assertEqual(len(r_stream.content), len(raw_bytes))
+
+            # 2. Create Timeline -> ADD_CLIP -> SPLIT_CLIP -> ADD_SUBTITLE on real PG15
+            profile = {"width": 640, "height": 360, "frame_rate": {"num": 30, "den": 1}, "timeline_timebase": {"num": 1, "den": 30000}, "audio_sample_rate": 48000}
+            tl = client.post(f"/api/v1/projects/{proj['id']}/timelines", json={"profile": profile}, headers=hdr("editor", f"idem-{uuid4().hex}")).json()
+            tl_id = tl["timeline_id"]
+            v_track_id = next(t["id"] for t in tl["tracks"] if t["type"] == "video")
+            s_track_id = next(t["id"] for t in tl["tracks"] if t["type"] == "subtitle")
+
+            r_v2 = client.post(
+                f"/api/v1/timelines/{tl_id}/operations",
+                json={
+                    "base_version": 1,
+                    "operations": [
+                        {"operation_id": str(uuid4()), "operation_type": "ADD_CLIP", "payload": {"track_id": v_track_id, "asset_id": asset_id, "source_in": 0, "source_out": 60000, "timeline_start": 0}},
+                        {"operation_id": str(uuid4()), "operation_type": "ADD_SUBTITLE", "payload": {"track_id": s_track_id, "timeline_start": 0, "duration": 60000, "text": "PG15 Full Export"}},
+                    ],
+                },
+                headers=hdr("editor", f"idem-{uuid4().hex}"),
+            )
+            self.assertEqual(r_v2.status_code, 200, r_v2.text)
+
+            tl_v2 = client.get(f"/api/v1/timelines/{tl_id}", headers=hdr("editor")).json()
+            clip_id = tl_v2["tracks"][0]["clips"][0]["id"]
+            r_v3 = client.post(
+                f"/api/v1/timelines/{tl_id}/operations",
+                json={"base_version": 2, "operations": [{"operation_id": str(uuid4()), "operation_type": "SPLIT_CLIP", "payload": {"clip_id": clip_id, "split_at_timeline_tick": 30000}}]},
+                headers=hdr("editor", f"idem-{uuid4().hex}"),
+            )
+            self.assertEqual(r_v3.status_code, 200, r_v3.text)
+
+            # 3. Final FFmpeg Render -> Real ffprobe + Visual Black-Frame QA -> MP4 Download on real PG15
+            r_fin = client.post(f"/api/v1/timelines/{tl_id}/renders", json={"timeline_version": 3}, headers=hdr("editor", f"idem-{uuid4().hex}"))
+            self.assertEqual(r_fin.status_code, 202, r_fin.text)
+            art_id = r_fin.json()["artifact_id"]
+
+            r_qa = client.post(f"/api/v1/artifacts/{art_id}/qa", headers=hdr("reviewer", f"idem-{uuid4().hex}"))
+            self.assertEqual(r_qa.status_code, 202, r_qa.text)
+            self.assertEqual(r_qa.json()["qa_status"], "passed")
+
+            r_dl = client.get(f"/api/v1/artifacts/{art_id}/download", headers=hdr("editor"))
+            self.assertEqual(r_dl.status_code, 200)
+            self.assertGreater(len(r_dl.content), 1000)
+
+
 if __name__ == "__main__":
     unittest.main()

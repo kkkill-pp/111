@@ -12,6 +12,10 @@ from services.application.timeline_service import TimelineService
 from services.infrastructure.contracts import load_permission_matrix, load_tool_contracts
 from services.infrastructure.errors import AppError
 from services.infrastructure.store import TenantContext
+from services.media_engine.visual_frame_inspector import VisualFrameInspector
+
+
+IRREVERSIBLE_ACTIONS = frozenset({"export_replace", "delete_media", "external_delivery", "enable_cloud_model", "enable_remote_mcp"})
 
 
 class AgentHarness:
@@ -31,6 +35,16 @@ class AgentHarness:
         if ctx.role not in tools[tool_name]["allowed_roles"]:
             raise AppError(403, "FORBIDDEN", f"Tool '{tool_name}' denies role '{ctx.role}'")
 
+    @staticmethod
+    def require_human_approval_for_irreversible(action: str, human_review_id: str | None) -> None:
+        """Cutlass approval.rs pattern: irreversible actions outside the undo stack strictly require explicit human approval."""
+        if action in IRREVERSIBLE_ACTIONS and not human_review_id:
+            raise AppError(409, "APPROVAL_REQUIRED", f"Irreversible action '{action}' requires explicit human approval")
+
+    def inspect_rendered_frames(self, ctx: TenantContext, artifact_path: str, save_dir: str | None = None) -> dict[str, Any]:
+        """Cutlass picture.rs pattern: visual frame self-check tool (read-only, zero DB/shell writes)."""
+        return VisualFrameInspector.inspect_video_frames(artifact_path, save_dir=save_dir).to_dict()
+
     def propose_edit_operations(
         self,
         ctx: TenantContext,
@@ -38,8 +52,13 @@ class AgentHarness:
         base_version: int,
         user_intent: str,
         idempotency_key: str,
+        permission_level: str = "L1",
     ) -> dict[str, Any]:
         """Generates an explainable EditProposal; NEVER mutates Timeline directly."""
+        if permission_level == "L0":
+            raise AppError(403, "FORBIDDEN", "L0 read-only agent permission cannot generate mutating proposals")
+        if permission_level not in ("L1", "L2", "L3"):
+            raise AppError(422, "VALIDATION_ERROR", f"Invalid agent permission_level: {permission_level}")
         self.check_tool_permission(ctx, "get_timeline")
         self.check_tool_permission(ctx, "propose_edit_operations")
 
