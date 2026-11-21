@@ -1,0 +1,61 @@
+version: 2
+description: >
+  Golden Media regression test matrix covering timing accuracy, VFR sync,
+  Preview/Final semantic equivalence, and PersonDetectionProvider stress scenarios.
+
+required_metadata_per_sample:
+  - sample_id
+  - license_and_source_attribution
+  - checksum_sha256
+  - expected_probe_json
+  - human_annotated_cut_points_ticks
+  - max_av_sync_drift_ms
+  - max_frame_boundary_error_frames
+
+samples:
+  - id: GM-01
+    category: single_speaker_interview
+    focus: [asr_accuracy, face_track, subtitle_sync]
+  - id: GM-02
+    category: two_speaker_podcast
+    focus: [split_layout, active_speaker, multi_person_detection]
+  - id: GM-03
+    category: screen_recording_with_webcam
+    focus: [screencast_layout, inset_detection, chart_readability]
+  - id: GM-04
+    category: long_form_4k_20min
+    focus: [upload_multipart, gpu_vram_ceiling, worker_throughput, cost_metering]
+  - id: GM-05
+    category: mobile_vfr_video
+    focus: [vfr_pts_mapping, av_sync_drift, rational_timebase]
+  - id: GM-06
+    category: ntsc_29_97fps
+    focus: [rational_30000_1001, frame_exact_trim, concat_no_drift]
+  - id: GM-07
+    category: pal_25fps
+    focus: [rational_25_1, frame_exact_trim]
+  - id: GM-08
+    category: multilingual_code_switching
+    focus: [asr_multilingual, subtitle_font_fallback]
+  - id: GM-09
+    category: heavy_background_music
+    focus: [asr_robustness, audio_loudness_qa]
+  - id: GM-10
+    category: silent_video_or_long_silence
+    focus: [silence_qa, vision_token_budget_cap]
+  - id: GM-11
+    category: overlapping_multi_speaker
+    focus: [context_preservation, multi_person_detection]
+  - id: GM-12
+    category: vertical_source_9_16
+    focus: [passthrough_no_reframe_degradation]
+  - id: GM-13
+    category: out_of_sync_source_audio
+    focus: [technical_qa_av_sync_detection]
+  - id: GM-14
+    category: corrupted_or_edge_container
+    focus: [probe_quarantine, non_retryable_failure]
+  - id: GM-15
+    category: person_detection_stress_occlusion_fast_distant_lowlight
+    focus: [person_detection_occlusion, fast_motion, distant_subjects, low_light_tracking]
+    note: Mandatory gate verifying MediaPipe + ONNX PersonDetectionProvider replacement for YOLOv8.

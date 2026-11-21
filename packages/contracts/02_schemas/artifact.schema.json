@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:artifact:v2.1",
+  "title": "Immutable Media Artifact v2.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "tenant_id", "project_id", "artifact_type",
+    "storage_key", "checksum_sha256", "size_bytes", "status", "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "render_job_id": { "type": ["string", "null"], "format": "uuid" },
+    "timeline_id": { "type": ["string", "null"], "format": "uuid" },
+    "timeline_version": { "type": ["integer", "null"], "minimum": 1 },
+    "artifact_type": {
+      "enum": [
+        "proxy_video", "thumbnail", "preview_video", "final_video",
+        "subtitle_file", "qa_attachment", "delivery_package"
+      ]
+    },
+    "storage_key": { "type": "string", "minLength": 1 },
+    "checksum_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "size_bytes": { "type": "integer", "minimum": 0 },
+    "status": { "enum": ["temporary", "ready", "quarantined", "failed", "expired", "deleted"] },
+    "created_by_lease_token": { "type": ["integer", "null"], "minimum": 1 },
+    "metadata": { "type": "object" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

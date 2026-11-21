@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:qa-report:v2",
+  "title": "QA Report v2",
+  "description": "Technical and content QA report. Any blocker forces status=failed and blocks human approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "qa_report_id",
+    "artifact_id",
+    "artifact_checksum",
+    "status",
+    "technical_checks",
+    "content_checks",
+    "blockers",
+    "warnings",
+    "completed_at"
+  ],
+  "properties": {
+    "qa_report_id": { "type": "string", "format": "uuid" },
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "artifact_checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "status": { "enum": ["pending", "running", "passed", "warning", "failed"] },
+    "technical_checks": { "type": "array", "items": { "$ref": "#/$defs/check_item" } },
+    "content_checks": { "type": "array", "items": { "$ref": "#/$defs/check_item" } },
+    "blockers": { "type": "array", "items": { "$ref": "#/$defs/check_item" } },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/check_item" } },
+    "completed_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "$defs": {
+    "check_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "passed", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "severity": { "enum": ["blocker", "warning", "info"] },
+        "passed": { "type": "boolean" },
+        "message": { "type": "string" },
+        "timecode_tick": { "type": ["integer", "null"], "minimum": 0 },
+        "metrics": { "type": "object" }
+      }
+    }
+  }
+}

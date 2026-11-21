@@ -1,0 +1,97 @@
+=== 1. Shell Syntax Check ===
+PASS: bash -n exit 0
+
+=== 2. Manifest SHA-256 Verification ===
+MANIFEST VERIFY: ok=70 mismatch=0 missing=0 extra=0 total=70
+
+=== 3. TypeScript Types Sync Check ===
+Generated /working_dir/c_61793f830b840038/artifacts/file_generation/ttl=63d/intermediate/ai-video-studio/packages/shared-types/src/v3-contracts.ts (9397 bytes) from 4 frozen v3.0 JSON Schemas.
+
+=== 4. Cross-Contract Verification (61 checks) ===
+=== AI VIDEO STUDIO v3.0 + HITL v2.2 CROSS-CONTRACT VERIFICATION REPORT ===
+[PASS] Found all 17 standalone JSON Schemas (13 v2.2 + 4 frozen v3.0) in 02_schemas/
+[PASS] JSON Schema Draft 2020-12 valid: agent-proposal.v3.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: artifact.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: asset.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: creative-brief.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: delivery.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: domain-event.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: edit-operation.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: edit-operation.v3.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: edit-proposal.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: human-review.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: qa-report.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: render-plan.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: render-plan.v3.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: storyboard.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: task.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: timeline.schema.json
+[PASS] JSON Schema Draft 2020-12 valid: timeline.v3.schema.json
+[PASS] Found 5 valid and 8 invalid v3.0 contract examples
+[PASS] Valid contract example passed: agent-proposal.v3.valid.json
+[PASS] Valid contract example passed: edit-operation.v3.add_keyframe.valid.json
+[PASS] Valid contract example passed: edit-operation.v3.valid.json
+[PASS] Valid contract example passed: render-plan.v3.valid.json
+[PASS] Valid contract example passed: timeline.v3.valid.json
+[PASS] Invalid contract example rejected as expected: agent-proposal.v3.applied_without_token.invalid.json
+[PASS] Invalid contract example rejected as expected: agent-proposal.v3.l0_forbidden.invalid.json
+[PASS] Invalid contract example rejected as expected: edit-operation.v3.missing_payload.invalid.json
+[PASS] Invalid contract example rejected as expected: edit-operation.v3.undo_forbidden.invalid.json
+[PASS] Invalid contract example rejected as expected: render-plan.v3.mutable_unlocked.invalid.json
+[PASS] Invalid contract example rejected as expected: render-plan.v3.silent_fallback.invalid.json
+[PASS] Invalid contract example rejected as expected: timeline.v3.legacy_speed.invalid.json
+[PASS] Invalid contract example rejected as expected: timeline.v3.missing_time_semantics.invalid.json
+[PASS] YAML valid: 03_openapi/openapi.yaml
+[PASS] YAML valid: 04_agent/human-in-the-loop-policy.yaml
+[PASS] YAML valid: 04_agent/permission-matrix.yaml
+[PASS] YAML valid: 04_agent/tool-contracts.yaml
+[PASS] YAML valid: 07_task_engine/pipeline.yaml
+[PASS] YAML valid: 09_tests_and_adr/golden-media-spec.yaml
+[PASS] Unified plural review endpoint present: POST /storyboards/{storyboard_id}/reviews
+[PASS] Unified plural review endpoint present: POST /proposals/{proposal_id}/reviews
+[PASS] Unified plural review endpoint present: POST /artifacts/{artifact_id}/reviews
+[PASS] Independent version command endpoint present: POST /timelines/{timeline_id}/undo
+[PASS] Independent version command endpoint present: POST /timelines/{timeline_id}/redo
+[PASS] OpenAPI 3.1 all $refs resolved across 34 paths
+[PASS] Zero loose untyped `type: object` 2xx responses in OpenAPI 3.1
+[PASS] All OpenAPI endpoints declare x-required-roles RBAC metadata
+[PASS] All mutating OpenAPI endpoints enforce Idempotency-Key
+[PASS] 3-way v3.0 EditOperation parity verified (21 canonical ops; UNDO/REDO excluded)
+[PASS] 3-way v3.0 AgentProposal.status parity verified (10 snake_case states)
+[PASS] Generated frontend TypeScript types (v3-contracts.ts) in sync with frozen v3.0 Schemas
+[PASS] CR-001 verify_rls.sql non-superuser seeded fail-closed & cross-tenant isolation verified
+[PASS] Risk #3 RenderPlan DB-level immutability trigger verified in 007_v3_protocol_upgrade.sql
+[PASS] v3.0 5-dimensional atomic ApprovalToken consumption function verified in 007_v3_protocol_upgrade.sql
+[PASS] Real-time fencing + serialization guard preserved in heartbeat_task_with_fencing()
+[PASS] Real-time fencing + serialization guard preserved in complete_task_with_fencing()
+[PASS] Real-time fencing + serialization guard preserved in fail_task_with_fencing()
+[PASS] Real-time fencing + serialization guard preserved in confirm_cancel_with_fencing()
+[PASS] Real-time fencing + serialization guard preserved in publish_artifact_with_fencing()
+[PASS] Real-time fencing + serialization guard preserved in record_usage_with_fencing()
+[PASS] FORCE RLS parity preserved across all 39 tenant-owned tables
+[PASS] Zero single-column FKs to tenant-owned tables (100% composite tenant_id FKs)
+Total checks: 61, Passed: 61, Failed: 0
+
+=== 5. Full Automated Test Suite (11 tests) ===
+/opt/spark/local/lib/python3.11/dist-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+test_license_redline_zero_cloud_and_zero_ultralytics (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_license_redline_zero_cloud_and_zero_ultralytics) ... ok
+test_vendored_clip_selection_and_ffmpeg_utils (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_clip_selection_and_ffmpeg_utils) ... ok
+test_vendored_frame_sampler_and_commercial_safe_person_detector (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_frame_sampler_and_commercial_safe_person_detector) ... ok
+test_vendored_ssrf_guard_blocks_internal_and_metadata_ips (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_ssrf_guard_blocks_internal_and_metadata_ips) ... ok
+test_ffmpeg_export_duration_matches_rational_ticks (test_time_semantics_v3.TestTimeSemanticsV3.test_ffmpeg_export_duration_matches_rational_ticks)
+Real FFmpeg + ffprobe check: 4.0s source at 2.0x playback_rate with exact tick-bounded -t exports 2.00s. ... ok
+test_rational_exact_math_standard_and_ntsc_framerates (test_time_semantics_v3.TestTimeSemanticsV3.test_rational_exact_math_standard_and_ntsc_framerates) ... ok
+test_rejects_invalid_bounds (test_time_semantics_v3.TestTimeSemanticsV3.test_rejects_invalid_bounds) ... ok
+test_full_hitl_vertical_slice_with_real_subtitle_burnin_and_honest_qa (test_vertical_slice_e2e.VerticalSliceE2ETest.test_full_hitl_vertical_slice_with_real_subtitle_burnin_and_honest_qa) ... ok
+test_renderer_applies_audio_volume_and_mute_honestly (test_vertical_slice_e2e.VerticalSliceE2ETest.test_renderer_applies_audio_volume_and_mute_honestly)
+P0 §2.2 regression: audio_ops enabled=False MUST render real silence in FFmpeg output. ... ok
+test_renderer_forbids_silent_semantic_fallback_and_applies_speed (test_vertical_slice_e2e.VerticalSliceE2ETest.test_renderer_forbids_silent_semantic_fallback_and_applies_speed)
+P0-A regression test: unimplemented overlay/transition MUST fail loudly; speed MUST take effect. ... ok
+test_timeline_service_rejects_unimplemented_ops_and_applies_volume (test_vertical_slice_e2e.VerticalSliceE2ETest.test_timeline_service_rejects_unimplemented_ops_and_applies_volume)
+P0 §2.1 regression: unimplemented ops MUST fail 422 (zero silent no-ops); UPDATE_VOLUME mutates snapshot. ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 6.627s
+
+OK

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-video-studio:schema:storyboard:v2",
+  "title": "Storyboard Proposal v2",
+  "description": "AI-proposed narrative plan. Never a production timeline until explicitly accepted by a human.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "storyboard_id",
+    "version",
+    "brief_version_id",
+    "source_analysis_run_ids",
+    "ordered_segments",
+    "hook",
+    "narrative_arc",
+    "estimated_duration_ticks",
+    "score_breakdown",
+    "evidence_refs",
+    "confidence",
+    "model_lineage"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "storyboard_id": { "type": "string", "format": "uuid" },
+    "version": { "type": "integer", "minimum": 1 },
+    "brief_version_id": { "type": "string", "format": "uuid" },
+    "source_analysis_run_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "format": "uuid" } },
+    "ordered_segments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["segment_id", "asset_id", "source_in_tick", "source_out_tick", "role_in_arc", "rationale"],
+        "properties": {
+          "segment_id": { "type": "string" },
+          "asset_id": { "type": "string", "format": "uuid" },
+          "source_in_tick": { "type": "integer", "minimum": 0 },
+          "source_out_tick": { "type": "integer", "minimum": 1 },
+          "role_in_arc": { "enum": ["hook", "setup", "argument", "proof", "climax", "cta"] },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "hook": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "narrative_arc": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "suggested_captions": { "type": "array", "items": { "type": "object" } },
+    "suggested_transitions": { "type": "array", "items": { "type": "string" } },
+    "estimated_duration_ticks": { "type": "integer", "minimum": 1 },
+    "risk_flags": { "type": "array", "items": { "type": "string" } },
+    "score_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hook_strength", "information_value", "emotional_intensity",
+        "story_completeness", "visual_quality", "audio_quality",
+        "context_dependency", "brand_safety", "duration_fit", "audience_relevance"
+      ],
+      "properties": {
+        "hook_strength": { "$ref": "#/$defs/score_dimension" },
+        "information_value": { "$ref": "#/$defs/score_dimension" },
+        "emotional_intensity": { "$ref": "#/$defs/score_dimension" },
+        "story_completeness": { "$ref": "#/$defs/score_dimension" },
+        "visual_quality": { "$ref": "#/$defs/score_dimension" },
+        "audio_quality": { "$ref": "#/$defs/score_dimension" },
+        "context_dependency": { "$ref": "#/$defs/score_dimension" },
+        "brand_safety": { "$ref": "#/$defs/score_dimension" },
+        "duration_fit": { "$ref": "#/$defs/score_dimension" },
+        "audience_relevance": { "$ref": "#/$defs/score_dimension" }
+      }
+    },
+    "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "model_lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model_id", "prompt_version"],
+      "properties": {
+        "provider": { "type": "string" },
+        "model_id": { "type": "string" },
+        "prompt_version": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "score_dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "confidence", "evidence", "rationale"],
+      "properties": {
+        "score": { "type": ["number", "null"], "minimum": 0.0, "maximum": 100.0 },
+        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "evidence": { "type": "array", "items": { "type": "string" } },
+        "rationale": { "type": "string" }
+      }
+    }
+  }
+}

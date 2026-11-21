@@ -1,0 +1,82 @@
+version: 2
+description: >
+  Effective permission for any Agent tool call is computed as:
+  effective_permission = min(originating_user_workspace_role, tool_whitelist, workspace_hitl_policy).
+
+role_hierarchy:
+  viewer: 10
+  reviewer: 20
+  editor: 30
+  admin: 40
+  owner: 50
+
+role_tool_matrix:
+  viewer:
+    allow: [get_project_context, get_asset_analysis, search_segments, get_timeline]
+    deny_all_others: true
+  reviewer:
+    allow: [get_project_context, get_asset_analysis, search_segments, get_timeline, validate_edit_operations, run_quality_check]
+    human_only_actions:
+      - "POST /storyboards/{id}/reviews"
+      - "POST /proposals/{id}/reviews"
+      - "POST /artifacts/{id}/reviews"
+    deny_all_others: true
+  editor:
+    allow:
+      - get_project_context
+      - get_asset_analysis
+      - search_segments
+      - get_timeline
+      - propose_storyboard
+      - propose_edit_operations
+      - validate_edit_operations
+      - apply_edit_operations
+      - undo_timeline_operation
+      - create_preview
+      - request_human_review
+      - run_quality_check
+      - request_final_render
+    deny: [request_delivery]
+  admin:
+    allow:
+      - get_project_context
+      - get_asset_analysis
+      - search_segments
+      - get_timeline
+      - propose_storyboard
+      - propose_edit_operations
+      - validate_edit_operations
+      - apply_edit_operations
+      - undo_timeline_operation
+      - create_preview
+      - request_human_review
+      - run_quality_check
+      - request_final_render
+      - request_delivery
+  owner:
+    allow: all_registered_tools_subject_to_hitl_gates
+
+mode_apply_rules:
+  copilot:
+    low_risk_edit: require_human_review
+    medium_risk_edit: require_human_review
+    high_risk_edit: require_human_review_and_token
+    critical_action: forbidden_for_agent
+  supervised_autopilot:
+    low_risk_edit: auto_apply_if_workspace_flag_enabled
+    medium_risk_edit: require_human_review_and_token
+    high_risk_edit: require_human_review_and_token
+    critical_action: forbidden_for_agent
+  batch_operator:
+    low_risk_edit: auto_apply_within_approved_brief_scope
+    medium_risk_edit: require_human_review_and_token
+    high_risk_edit: require_human_review_and_token
+    critical_action: require_owner_approval_per_artifact
+
+forbidden_capabilities:
+  - direct_sql_execution
+  - arbitrary_shell_or_python_eval
+  - arbitrary_ffmpeg_filtergraph_string
+  - cross_tenant_read_or_write
+  - self_approval_of_human_reviews
+  - unapproved_external_social_publish

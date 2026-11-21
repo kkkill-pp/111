@@ -1,0 +1,15 @@
+{
+  "source_spec": "1920x1080@30fps H.264/AAC 10.0s",
+  "metrics": {
+    "generate_1080p_10s_sec": 1.5472,
+    "transcode_720p_proxy_sec": 2.1467,
+    "proxy_realtime_factor": 4.66,
+    "extract_10_thumbnails_sec": 0.5894,
+    "thumbnails_generated": 10,
+    "export_1080p_2x_ass_burnin_sec": 2.7608,
+    "export_realtime_factor": 1.81,
+    "exported_duration_sec": 5.0,
+    "exported_duration_error_ms": 0.0,
+    "exported_size_bytes": 4748301
+  }
+}

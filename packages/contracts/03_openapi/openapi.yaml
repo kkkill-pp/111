@@ -1,0 +1,2271 @@
+openapi: 3.1.0
+info:
+  title: AI Video Studio API
+  version: 3.0.0
+  description: AI Video Studio v3.0 Unified API (OpenAPI 3.1.0). Freezes Timeline
+    v3.0, 21 canonical EditOperations (UNDO/REDO are independent version commands),
+    immutable FFmpeg-only RenderPlan v3.0, and L0-L3 AgentProposal v3.0 with unified
+    plural `/reviews`. All legacy v2.2 endpoints remain preserved with migration mapping
+    and compatibility headers (CR-001).
+servers:
+- url: /api/v1
+security:
+- bearerAuth: []
+paths:
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Paginated workspace list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createWorkspace
+      x-required-roles:
+      - owner
+      - admin
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                hitl_policy:
+                  $ref: '#/components/schemas/HitlPolicy'
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /workspaces/{workspace_id}:
+    get:
+      operationId: getWorkspace
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateWorkspace
+      x-required-roles:
+      - owner
+      - admin
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                hitl_policy:
+                  $ref: '#/components/schemas/HitlPolicy'
+      responses:
+        '200':
+          description: Workspace updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspace_id}/members:
+    post:
+      operationId: inviteWorkspaceMember
+      x-required-roles:
+      - owner
+      - admin
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              - role
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  enum:
+                  - admin
+                  - editor
+                  - reviewer
+                  - viewer
+      responses:
+        '201':
+          description: Member invited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMember'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspace_id}/members/{member_id}:
+    patch:
+      operationId: updateWorkspaceMemberRole
+      x-required-roles:
+      - owner
+      - admin
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - name: member_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - role
+              properties:
+                role:
+                  enum:
+                  - owner
+                  - admin
+                  - editor
+                  - reviewer
+                  - viewer
+      responses:
+        '200':
+          description: Member updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMember'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /projects:
+    get:
+      operationId: listProjects
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - name: workspace_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        schema:
+          enum:
+          - active
+          - archived
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Paginated project list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+    post:
+      operationId: createProject
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - workspace_id
+              - name
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                description:
+                  type: string
+                  maxLength: 4000
+                default_profile:
+                  $ref: '#/components/schemas/TimelineProfile'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /projects/{project_id}:
+    get:
+      operationId: getProject
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateProject
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                description:
+                  type: string
+                  maxLength: 4000
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+    delete:
+      operationId: deleteProject
+      x-required-roles:
+      - owner
+      - admin
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Project soft-deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /projects/{project_id}/archive:
+    post:
+      operationId: archiveProject
+      x-required-roles:
+      - owner
+      - admin
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Project archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+  /projects/{project_id}/upload-sessions:
+    post:
+      operationId: createUploadSession
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - filename
+              - size_bytes
+              - kind
+              properties:
+                filename:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                size_bytes:
+                  type: integer
+                  minimum: 1
+                kind:
+                  enum:
+                  - video
+                  - audio
+                  - image
+                checksum_sha256:
+                  type: string
+                  pattern: ^[a-fA-F0-9]{64}$
+      responses:
+        '201':
+          description: Presigned upload session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /upload-sessions/{session_id}/complete:
+    post:
+      operationId: completeUploadSession
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - checksum_sha256
+              properties:
+                checksum_sha256:
+                  type: string
+                  pattern: ^[a-fA-F0-9]{64}$
+                parts:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                    - part_number
+                    - etag
+                    properties:
+                      part_number:
+                        type: integer
+                        minimum: 1
+                      etag:
+                        type: string
+      responses:
+        '202':
+          description: Asset created and probe task queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadCompleteResponse'
+  /assets/{asset_id}:
+    get:
+      operationId: getAsset
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/AssetId'
+      responses:
+        '200':
+          description: Asset detail with probe summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Asset'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /assets/{asset_id}/analyze:
+    post:
+      operationId: analyzeAsset
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/AssetId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stages:
+                  type: array
+                  items:
+                    enum:
+                    - proxy
+                    - asr
+                    - scene_detection
+                    - keyframes
+                    - person_detection
+                    - visual_analysis
+                    - semantic_fusion
+                    - candidate_generation
+      responses:
+        '202':
+          $ref: '#/components/responses/AcceptedTask'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /assets/{asset_id}/analysis:
+    get:
+      operationId: getAssetAnalysis
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/AssetId'
+      responses:
+        '200':
+          description: Latest analysis runs and separated understanding entities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetAnalysisResponse'
+  /projects/{project_id}/briefs:
+    post:
+      operationId: createBrief
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - title
+              - brief
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                brief:
+                  $ref: '#/components/schemas/CreativeBriefPayload'
+      responses:
+        '201':
+          description: Creative brief v1 created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreativeBriefResponse'
+  /briefs/{brief_id}/versions:
+    post:
+      operationId: createBriefVersion
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - name: brief_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - brief
+              properties:
+                brief:
+                  $ref: '#/components/schemas/CreativeBriefPayload'
+      responses:
+        '201':
+          description: Immutable brief version created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreativeBriefResponse'
+  /projects/{project_id}/storyboards:
+    post:
+      operationId: proposeStoryboard
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - brief_version_id
+              properties:
+                brief_version_id:
+                  type: string
+                  format: uuid
+                candidate_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                variants:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  default: 3
+      responses:
+        '202':
+          $ref: '#/components/responses/AcceptedTask'
+  /storyboards/{storyboard_id}:
+    get:
+      operationId: getStoryboard
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/StoryboardId'
+      responses:
+        '200':
+          description: Storyboard detail with version lineage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoryboardResponse'
+  /storyboards/{storyboard_id}/reviews:
+    post:
+      operationId: createStoryboardReview
+      x-required-roles:
+      - owner
+      - admin
+      - reviewer
+      summary: Submit human review decision on an immutable storyboard version
+      parameters:
+      - $ref: '#/components/parameters/StoryboardId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewSubmission'
+      responses:
+        '201':
+          description: Storyboard review recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanReview'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /projects/{project_id}/timelines:
+    post:
+      operationId: createTimeline
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      summary: Create production timeline (from an accepted storyboard or blank)
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - profile
+              properties:
+                storyboard_id:
+                  type:
+                  - string
+                  - 'null'
+                  format: uuid
+                storyboard_version:
+                  type:
+                  - integer
+                  - 'null'
+                  minimum: 1
+                profile:
+                  $ref: '#/components/schemas/TimelineProfile'
+      responses:
+        '201':
+          description: Timeline v1 created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /timelines/{timeline_id}:
+    get:
+      operationId: getTimeline
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - name: version
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Immutable timeline snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineResponse'
+  /timelines/{timeline_id}/versions:
+    get:
+      operationId: listTimelineVersions
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Paginated timeline version history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineVersionsResponse'
+  /timelines/{timeline_id}/validate:
+    post:
+      operationId: validateTimelineOperations
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimelineOperationsRequest'
+      responses:
+        '200':
+          description: Validation result and computed Diff
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationDiffResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /timelines/{timeline_id}/operations:
+    post:
+      operationId: submitTimelineOperations
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      summary: Submit validated operations or create an EditProposal against base_version
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimelineOperationsRequest'
+      responses:
+        '200':
+          description: Applied or EditProposal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineOperationsResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /timelines/{timeline_id}/undo:
+    post:
+      operationId: undoTimeline
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      summary: Independent version command appending a new inverse timeline version
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - base_version
+              properties:
+                base_version:
+                  type: integer
+                  minimum: 2
+                target_version:
+                  type: integer
+                  minimum: 1
+                undo_scope:
+                  $ref: '#/components/schemas/UndoScope'
+      responses:
+        '200':
+          description: New inverse timeline version created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineVersionMutationResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /timelines/{timeline_id}/redo:
+    post:
+      operationId: redoTimeline
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      summary: Independent version command appending a redo timeline version
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - base_version
+              - target_version
+              properties:
+                base_version:
+                  type: integer
+                  minimum: 1
+                target_version:
+                  type: integer
+                  minimum: 1
+                undo_scope:
+                  $ref: '#/components/schemas/UndoScope'
+      responses:
+        '200':
+          description: New redo timeline version created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineVersionMutationResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /proposals/{proposal_id}/reviews:
+    post:
+      operationId: createProposalReview
+      x-required-roles:
+      - owner
+      - admin
+      - reviewer
+      - editor
+      summary: Submit human review decision on an EditProposal (supports per-item
+        selection)
+      parameters:
+      - $ref: '#/components/parameters/ProposalId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewSubmission'
+      responses:
+        '201':
+          description: Proposal review recorded; issues single-use approval_token
+            when approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalReviewResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /timelines/{timeline_id}/previews:
+    post:
+      operationId: createPreview
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - timeline_version
+              properties:
+                timeline_version:
+                  type: integer
+                  minimum: 1
+                range_ticks:
+                  $ref: '#/components/schemas/TickRange'
+      responses:
+        '202':
+          $ref: '#/components/responses/AcceptedTask'
+  /timelines/{timeline_id}/renders:
+    post:
+      operationId: createFinalRender
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/TimelineId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - timeline_version
+              - output_profile
+              properties:
+                timeline_version:
+                  type: integer
+                  minimum: 1
+                output_profile:
+                  type: string
+                budget_acknowledged:
+                  type: boolean
+                  default: false
+      responses:
+        '202':
+          $ref: '#/components/responses/AcceptedTask'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /renders/{render_job_id}:
+    get:
+      operationId: getRenderJob
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - name: render_job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Render job status, plan checksum, and produced artifacts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenderJobResponse'
+  /artifacts/{artifact_id}/qa:
+    post:
+      operationId: runArtifactQA
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      parameters:
+      - $ref: '#/components/parameters/ArtifactId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/AcceptedTask'
+    get:
+      operationId: getArtifactQA
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: Latest QA report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QAReportResponse'
+  /artifacts/{artifact_id}/reviews:
+    post:
+      operationId: createArtifactReview
+      x-required-roles:
+      - owner
+      - admin
+      - reviewer
+      summary: Submit human review/approval bound to artifact checksum, timeline version,
+        and QA report
+      parameters:
+      - $ref: '#/components/parameters/ArtifactId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewSubmission'
+      responses:
+        '201':
+          description: Artifact review recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanReview'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /artifacts/{artifact_id}/deliveries:
+    post:
+      operationId: createDelivery
+      x-required-roles:
+      - owner
+      - admin
+      summary: Execute delivery (requires QA passed and valid current artifact approval)
+      parameters:
+      - $ref: '#/components/parameters/ArtifactId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - human_review_id
+              - destination_type
+              properties:
+                human_review_id:
+                  type: string
+                  format: uuid
+                destination_type:
+                  enum:
+                  - signed_download
+                  - webhook
+                  - s3_export
+                  - social_platform
+                destination_config:
+                  type: object
+      responses:
+        '202':
+          $ref: '#/components/responses/AcceptedTask'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /projects/{project_id}/tasks:
+    get:
+      operationId: listProjectTasks
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/TaskStatus'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Paginated project task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+  /tasks/{task_id}:
+    get:
+      operationId: getTask
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      - reviewer
+      - viewer
+      parameters:
+      - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+  /tasks/{task_id}/cancel:
+    post:
+      operationId: cancelTask
+      x-required-roles:
+      - owner
+      - admin
+      - editor
+      parameters:
+      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Cooperative cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskAccepted'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    StoryboardId:
+      name: storyboard_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TimelineId:
+      name: timeline_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 200
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found or not visible in tenant scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Version conflict, stale subject checksum, failed QA gate, or missing
+        approval
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request or domain constraint validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AcceptedTask:
+      description: Asynchronous task accepted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TaskAccepted'
+  schemas:
+    Rational:
+      type: object
+      required:
+      - num
+      - den
+      properties:
+        num:
+          type: integer
+          minimum: 1
+        den:
+          type: integer
+          minimum: 1
+    TickRange:
+      type: object
+      required:
+      - start_tick
+      - end_tick
+      properties:
+        start_tick:
+          type: integer
+          minimum: 0
+        end_tick:
+          type: integer
+          minimum: 1
+    TimelineProfile:
+      type: object
+      required:
+      - width
+      - height
+      - frame_rate
+      - timeline_timebase
+      - audio_sample_rate
+      properties:
+        width:
+          type: integer
+          minimum: 16
+          multipleOf: 2
+        height:
+          type: integer
+          minimum: 16
+          multipleOf: 2
+        frame_rate:
+          $ref: '#/components/schemas/Rational'
+        timeline_timebase:
+          $ref: '#/components/schemas/Rational'
+        audio_sample_rate:
+          type: integer
+          enum:
+          - 44100
+          - 48000
+    HitlPolicy:
+      type: object
+      properties:
+        default_mode:
+          enum:
+          - copilot
+          - supervised_autopilot
+          - batch_operator
+        allow_auto_apply_low_risk:
+          type: boolean
+        require_preview_before_final_render:
+          type: boolean
+        require_human_approval_for_external_delivery:
+          type: boolean
+        hard_budget_cap_usd:
+          type: number
+          minimum: 0
+    ErrorResponse:
+      type: object
+      required:
+      - code
+      - message
+      - trace_id
+      properties:
+        code:
+          type: string
+          enum:
+          - UNAUTHORIZED
+          - FORBIDDEN
+          - NOT_FOUND
+          - VERSION_CONFLICT
+          - STALE_SUBJECT_CHECKSUM
+          - QA_BLOCKER_PRESENT
+          - APPROVAL_REQUIRED
+          - APPROVAL_EXPIRED
+          - BUDGET_LIMIT_EXCEEDED
+          - VALIDATION_ERROR
+          - IDEMPOTENCY_CONFLICT
+          - RATE_LIMITED
+          - INTERNAL_ERROR
+        message:
+          type: string
+        details:
+          type: object
+        trace_id:
+          type: string
+    TaskStatus:
+      type: string
+      enum:
+      - pending
+      - queued
+      - claimed
+      - running
+      - retry_wait
+      - succeeded
+      - failed
+      - cancel_requested
+      - cancelled
+      - blocked
+      - expired
+    TaskAccepted:
+      type: object
+      required:
+      - task_id
+      - status
+      - trace_id
+      properties:
+        task_id:
+          type: string
+          format: uuid
+        status:
+          enum:
+          - queued
+          - blocked
+          - cancel_requested
+        trace_id:
+          type: string
+    Workspace:
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - hitl_policy
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          enum:
+          - active
+          - archived
+          - deleted
+        hitl_policy:
+          $ref: '#/components/schemas/HitlPolicy'
+    WorkspaceListResponse:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workspace'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    WorkspaceMember:
+      type: object
+      required:
+      - id
+      - workspace_id
+      - user_id
+      - role
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          enum:
+          - owner
+          - admin
+          - editor
+          - reviewer
+          - viewer
+        status:
+          enum:
+          - invited
+          - active
+          - revoked
+    Project:
+      type: object
+      required:
+      - id
+      - workspace_id
+      - name
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type:
+          - string
+          - 'null'
+        status:
+          enum:
+          - active
+          - archived
+          - deleted
+    ProjectListResponse:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    UploadSession:
+      type: object
+      required:
+      - id
+      - storage_key
+      - upload_url
+      - expires_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        storage_key:
+          type: string
+        upload_url:
+          type: string
+          format: uri
+        multipart_upload_id:
+          type:
+          - string
+          - 'null'
+        expires_at:
+          type: string
+          format: date-time
+    UploadCompleteResponse:
+      type: object
+      required:
+      - asset_id
+      - task_id
+      - status
+      - trace_id
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        status:
+          enum:
+          - queued
+          - blocked
+        trace_id:
+          type: string
+    Asset:
+      type: object
+      required:
+      - id
+      - project_id
+      - kind
+      - status
+      - original_filename
+      - size_bytes
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        kind:
+          enum:
+          - video
+          - audio
+          - image
+        status:
+          enum:
+          - uploading
+          - uploaded
+          - probing
+          - ready
+          - analyzing
+          - analyzed
+          - failed
+          - quarantined
+          - deleted
+        original_filename:
+          type: string
+        size_bytes:
+          type: integer
+        is_vfr:
+          type:
+          - boolean
+          - 'null'
+    AssetAnalysisResponse:
+      type: object
+      required:
+      - asset_id
+      - runs
+      - scenes_count
+      - segments_count
+      - candidates_count
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        runs:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - run_type
+            - status
+            - pipeline_version
+            properties:
+              id:
+                type: string
+                format: uuid
+              run_type:
+                type: string
+              status:
+                enum:
+                - pending
+                - running
+                - succeeded
+                - partial
+                - failed
+                - cancelled
+              pipeline_version:
+                type: string
+        scenes_count:
+          type: integer
+          minimum: 0
+        segments_count:
+          type: integer
+          minimum: 0
+        candidates_count:
+          type: integer
+          minimum: 0
+    CreativeBriefPayload:
+      type: object
+      required:
+      - target_platform
+      - audience
+      - objective
+      - language
+      - duration_range_sec
+      - aspect_ratio
+      properties:
+        target_platform:
+          enum:
+          - youtube_shorts
+          - tiktok
+          - instagram_reels
+          - douyin
+          - xiaohongshu
+          - linkedin
+          - generic
+        audience:
+          type: string
+        objective:
+          enum:
+          - acquisition
+          - education
+          - brand
+          - entertainment
+          - conversion
+        language:
+          type: string
+        duration_range_sec:
+          type: object
+          required:
+          - min
+          - max
+          properties:
+            min:
+              type: integer
+            max:
+              type: integer
+        aspect_ratio:
+          enum:
+          - '9:16'
+          - '16:9'
+          - '1:1'
+    CreativeBriefResponse:
+      type: object
+      required:
+      - brief_id
+      - brief_version_id
+      - version
+      - brief_checksum
+      - brief
+      properties:
+        brief_id:
+          type: string
+          format: uuid
+        brief_version_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        brief_checksum:
+          type: string
+        brief:
+          $ref: '#/components/schemas/CreativeBriefPayload'
+    StoryboardResponse:
+      type: object
+      required:
+      - id
+      - project_id
+      - current_version
+      - status
+      - brief_version_id
+      - proposal_checksum
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        current_version:
+          type: integer
+          minimum: 1
+        status:
+          enum:
+          - generating
+          - proposed
+          - accepted
+          - rejected
+          - revision_requested
+          - superseded
+          - stale
+        brief_version_id:
+          type: string
+          format: uuid
+        proposal_checksum:
+          type: string
+        confidence:
+          type:
+          - number
+          - 'null'
+    EditOperationInput:
+      type: object
+      required:
+      - operation_id
+      - operation_type
+      - payload
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        operation_type:
+          enum:
+          - ADD_CLIP
+          - REMOVE_CLIP
+          - TRIM_CLIP
+          - MOVE_CLIP
+          - SPLIT_CLIP
+          - MERGE_CLIP
+          - REORDER_CLIP
+          - UPDATE_TRANSFORM
+          - UPDATE_PLAYBACK_RATE
+          - UPDATE_VOLUME
+          - ADD_SUBTITLE
+          - UPDATE_SUBTITLE
+          - REMOVE_SUBTITLE
+          - ADD_TRANSITION
+          - REMOVE_TRANSITION
+          - ADD_OVERLAY
+          - REMOVE_OVERLAY
+          - SET_CANVAS_PROFILE
+          - ADD_KEYFRAME
+          - APPLY_EFFECT
+          - ADD_MARKER
+        payload:
+          type: object
+        reason:
+          type: string
+          maxLength: 2000
+        evidence_refs:
+          type: array
+          items:
+            type: string
+        risk_level:
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+        reversible:
+          type: boolean
+          default: true
+    TimelineResponse:
+      type: object
+      required:
+      - timeline_id
+      - project_id
+      - version
+      - snapshot_checksum
+      - profile
+      - tracks
+      properties:
+        timeline_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        snapshot_checksum:
+          type: string
+        profile:
+          $ref: '#/components/schemas/TimelineProfile'
+        tracks:
+          type: array
+          items:
+            type: object
+    TimelineVersionsResponse:
+      type: object
+      required:
+      - timeline_id
+      - items
+      - next_cursor
+      properties:
+        timeline_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            type: object
+            required:
+            - version
+            - parent_version
+            - origin_command
+            - snapshot_checksum
+            - created_at
+            properties:
+              version:
+                type: integer
+                minimum: 1
+              parent_version:
+                type:
+                - integer
+                - 'null'
+              origin_command:
+                enum:
+                - init
+                - storyboard_compile
+                - edit
+                - undo
+                - redo
+              snapshot_checksum:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    TimelineOperationsRequest:
+      type: object
+      required:
+      - base_version
+      - operations
+      properties:
+        base_version:
+          type: integer
+          minimum: 1
+        operations:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/EditOperationInput'
+        apply_mode:
+          enum:
+          - validate_only
+          - create_proposal
+          - apply_if_allowed
+          default: create_proposal
+        approval_token:
+          type:
+          - string
+          - 'null'
+    ValidationDiffResponse:
+      type: object
+      required:
+      - valid
+      - errors
+      - warnings
+      - diff
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: object
+        warnings:
+          type: array
+          items:
+            type: object
+        diff:
+          type: object
+    TimelineOperationsResponse:
+      type: object
+      required:
+      - outcome
+      - base_version
+      properties:
+        outcome:
+          enum:
+          - validated
+          - proposal_created
+          - applied
+        base_version:
+          type: integer
+          minimum: 1
+        new_version:
+          type:
+          - integer
+          - 'null'
+        proposal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        proposal_checksum:
+          type:
+          - string
+          - 'null'
+        diff:
+          type: object
+    TimelineVersionMutationResponse:
+      type: object
+      required:
+      - timeline_id
+      - base_version
+      - new_version
+      - origin_command
+      - snapshot_checksum
+      properties:
+        timeline_id:
+          type: string
+          format: uuid
+        base_version:
+          type: integer
+          minimum: 1
+        new_version:
+          type: integer
+          minimum: 2
+        origin_command:
+          enum:
+          - undo
+          - redo
+        snapshot_checksum:
+          type: string
+    ReviewSubmission:
+      type: object
+      required:
+      - subject_version
+      - subject_checksum
+      - decision
+      properties:
+        subject_version:
+          type: string
+          minLength: 1
+        subject_checksum:
+          type: string
+          pattern: ^[a-fA-F0-9]{64}$
+        qa_report_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        decision:
+          enum:
+          - approve
+          - approve_with_warnings
+          - reject
+          - request_changes
+        comment:
+          type: string
+          maxLength: 5000
+        selected_items:
+          type: array
+          items:
+            type: string
+        rejected_items:
+          type: array
+          items:
+            type: string
+    HumanReview:
+      type: object
+      required:
+      - id
+      - subject_type
+      - subject_id
+      - subject_version
+      - subject_checksum
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        subject_type:
+          enum:
+          - storyboard
+          - edit_proposal
+          - render_artifact
+          - delivery
+        subject_id:
+          type: string
+          format: uuid
+        subject_version:
+          type: string
+        subject_checksum:
+          type: string
+        qa_report_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        status:
+          enum:
+          - pending
+          - approved
+          - approved_with_warnings
+          - rejected
+          - changes_requested
+          - expired
+          - superseded
+        decision:
+          type:
+          - string
+          - 'null'
+          enum:
+          - approve
+          - approve_with_warnings
+          - reject
+          - request_changes
+          - null
+        reviewer_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        comment:
+          type:
+          - string
+          - 'null'
+        selected_items:
+          type: array
+          items:
+            type: string
+        rejected_items:
+          type: array
+          items:
+            type: string
+        decided_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    ProposalReviewResponse:
+      type: object
+      required:
+      - review
+      - approval_token
+      properties:
+        review:
+          $ref: '#/components/schemas/HumanReview'
+        approval_token:
+          type:
+          - string
+          - 'null'
+    RenderJobResponse:
+      type: object
+      required:
+      - id
+      - render_plan_id
+      - render_mode
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        render_plan_id:
+          type: string
+          format: uuid
+        render_mode:
+          enum:
+          - preview
+          - final
+        status:
+          enum:
+          - queued
+          - claimed
+          - running
+          - qa_pending
+          - qa_passed
+          - qa_warning
+          - qa_failed
+          - retry_wait
+          - failed
+          - cancel_requested
+          - cancelled
+        encoder_used:
+          type:
+          - string
+          - 'null'
+        artifact_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+    QAReportResponse:
+      type: object
+      required:
+      - qa_report_id
+      - artifact_id
+      - status
+      - blockers
+      - warnings
+      properties:
+        qa_report_id:
+          type: string
+          format: uuid
+        artifact_id:
+          type: string
+          format: uuid
+        status:
+          enum:
+          - pending
+          - running
+          - passed
+          - warning
+          - failed
+        blockers:
+          type: array
+          items:
+            type: object
+        warnings:
+          type: array
+          items:
+            type: object
+        completed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    TaskResponse:
+      type: object
+      required:
+      - id
+      - task_type
+      - status
+      - attempt
+      - max_attempts
+      - lease_token
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_type:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        attempt:
+          type: integer
+          minimum: 0
+        max_attempts:
+          type: integer
+          minimum: 1
+        lease_token:
+          type: integer
+          minimum: 0
+        lease_owner:
+          type:
+          - string
+          - 'null'
+        lease_expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TaskListResponse:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskResponse'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    AgentPermissionLevel:
+      type: string
+      enum:
+      - L0
+      - L1
+      - L2
+      - L3
+    ProposalStatusV3:
+      type: string
+      enum:
+      - draft
+      - submitted
+      - reviewing
+      - approved
+      - applied
+      - rejected
+      - revision_requested
+      - conflicted
+      - expired
+      - cancelled
+    UndoScope:
+      type: string
+      enum:
+      - user_edit
+      - proposal_batch
+      - non_undoable_system
+    ApprovalTokenBinding:
+      type: object
+      required:
+      - token_id
+      - tenant_id
+      - project_id
+      - proposal_id
+      - timeline_version
+      - proposal_checksum
+      - timeline_checksum
+      - issued_to_user_id
+      - expires_at
+      - single_use
+      - atomic_transaction_required
+      properties:
+        token_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        timeline_version:
+          type: integer
+          minimum: 1
+        proposal_checksum:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        timeline_checksum:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        issued_to_user_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        consumed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        single_use:
+          const: true
+        atomic_transaction_required:
+          const: true
