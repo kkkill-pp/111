@@ -76,6 +76,15 @@ jobs:
           set -euo pipefail
           bash migrations/verify_all_pg15.sh 2>&1 | tee ci_logs/sprint0_pg15_raw.log
 
+      - name: Phase 6 Gate — Migration 008 Plugin Platform FORCE RLS + Symmetric Rollback Round-Trip
+        env:
+          DATABASE_URL: postgres://postgres:postgres_ci_password@localhost:5432/aivs_sprint0_empty
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/008_plugin_platform_rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/008_plugin_platform_rollback.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/008_plugin_platform_rls.sql
+
       - name: Run Full Automated Test Suite (Live PG15 psycopg Persistence + Multi-Track + Pixel Subtitle + Time Semantics v3)
         env:
           DATABASE_URL: postgres://postgres:postgres_ci_password@localhost:5432/aivs_sprint0_empty
@@ -94,6 +103,12 @@ jobs:
           cd apps/web
           npm install --no-audit --no-fund
           npm run build 2>&1 | tee ../../ci_logs/web_editor_build.log
+
+      - name: Verify Production Docker Image Builds (API + Web)
+        run: |
+          set -euo pipefail
+          docker build -f infra/docker/Dockerfile.api -t aivs-api:ci . 2>&1 | tee ci_logs/docker_api_build.log
+          docker build -f infra/docker/Dockerfile.web -t aivs-web:ci . 2>&1 | tee ci_logs/docker_web_build.log
 
       - name: Upload Raw Sprint 0 & Protocol Freeze Logs as CI Artifact
         if: always()

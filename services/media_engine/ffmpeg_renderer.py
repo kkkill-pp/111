@@ -219,11 +219,19 @@ class FFmpegRendererAdapter:
                     f"transform.mode='{mode}' is not yet implemented in Sprint 1 FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
                 )
             for tr in op.get("transitions") or []:
-                if tr.get("type") not in ("cut", "fade_in", "fade_out"):
+                ttype = tr.get("type")
+                if ttype == "crossfade":
+                    if len(render_plan.get("video_ops", [])) < 2:
+                        raise AppError(
+                            422,
+                            "VALIDATION_ERROR",
+                            "transition.type='crossfade' requires at least 2 adjacent video clips (single-clip crossfade forbidden by ADR-004)",
+                        )
+                elif ttype not in ("cut", "fade_in", "fade_out"):
                     raise AppError(
                         422,
                         "VALIDATION_ERROR",
-                        f"transition.type='{tr.get('type')}' is not yet implemented in Sprint 1 FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
+                        f"transition.type='{ttype}' is not yet implemented in FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
                     )
             for fx in op.get("effects") or []:
                 if fx.get("enabled", True):
@@ -283,6 +291,8 @@ class FFmpegRendererAdapter:
         inputs: list[str] = []
         filter_parts: list[str] = []
         concat_labels: list[str] = []
+        clip_eff_durs: list[float] = []
+        clip_crossfade_out_durs: list[float] = []
 
         for idx, op in enumerate(render_plan["video_ops"]):
             src_path = asset_paths[op["asset_id"]]
@@ -312,6 +322,8 @@ class FFmpegRendererAdapter:
                     v_chain.append(DEFAULT_CAPABILITY_REGISTRY.compile_video_effect(str(fx["effect_type"]), fx.get("params") or {}))
             v_chain.extend([f"fps={fps_str}", "format=yuv420p"])
             eff_v_dur = dur_s / max(speed, 0.25)
+            clip_eff_durs.append(eff_v_dur)
+            cf_out_s = 0.0
             for tr in op.get("transitions") or []:
                 tr_dur_s = (int(tr.get("duration_ticks", 0) or 0) * tb_num) / tb_den
                 if tr_dur_s <= 0:
@@ -320,6 +332,9 @@ class FFmpegRendererAdapter:
                     v_chain.append(f"fade=t=in:st=0:d={tr_dur_s:.6f}")
                 elif tr.get("type") == "fade_out":
                     v_chain.append(f"fade=t=out:st={max(0.0, eff_v_dur - tr_dur_s):.6f}:d={tr_dur_s:.6f}")
+                elif tr.get("type") == "crossfade":
+                    cf_out_s = max(cf_out_s, tr_dur_s)
+            clip_crossfade_out_durs.append(cf_out_s)
             filter_parts.append(f"[{idx}:v]{','.join(v_chain)}[v{idx}]")
 
             audio_op = next((a for a in (render_plan.get("audio_ops") or []) if a.get("clip_id") == op["clip_id"] and a.get("track_type") != "audio"), None)
@@ -384,20 +399,44 @@ class FFmpegRendererAdapter:
             filter_parts.append(f"[{in_idx}:a]{','.join(ea_chain)}{lbl}")
             extra_audio_labels.append(lbl)
 
+        has_crossfade = n >= 2 and any(d > 0.0 for d in clip_crossfade_out_durs[:-1])
+        base_video_label = "[vcat]" if subtitle_ops else "[vout]"
+
         with tempfile.TemporaryDirectory(prefix="aivs_ass_") as tmp_ass_dir:
+            if has_crossfade:
+                cur_v = "[v0]"
+                cur_a = "[a0]"
+                running_dur = clip_eff_durs[0]
+                for i in range(1, n):
+                    cf_d = clip_crossfade_out_durs[i - 1]
+                    max_allowed = min(running_dur, clip_eff_durs[i]) * 0.95
+                    d = min(cf_d, max_allowed) if cf_d > 0.0 else 0.0
+                    next_v = base_video_label if i == n - 1 else f"[vx{i}]"
+                    next_a = base_audio_label if i == n - 1 else f"[ax{i}]"
+                    if d > 0.0:
+                        offset = max(0.0, running_dur - d)
+                        filter_parts.append(
+                            f"{cur_v}[v{i}]xfade=transition=fade:duration={d:.6f}:offset={offset:.6f}{next_v}"
+                        )
+                        filter_parts.append(f"{cur_a}[a{i}]acrossfade=d={d:.6f}{next_a}")
+                        running_dur = running_dur + clip_eff_durs[i] - d
+                    else:
+                        filter_parts.append(f"{cur_v}{cur_a}[v{i}][a{i}]concat=n=2:v=1:a=1{next_v}{next_a}")
+                        running_dur = running_dur + clip_eff_durs[i]
+                    cur_v, cur_a = next_v, next_a
+            else:
+                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1{base_video_label}{base_audio_label}")
+
             if subtitle_ops:
                 ass_file = Path(tmp_ass_dir) / "captions.ass"
                 self._write_ass_subtitles(subtitle_ops, out_prof["width"], out_prof["height"], tb_num, tb_den, ass_file)
                 escaped_ass = _escape_ffmpeg_filter_path(str(ass_file))
-                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vcat]{base_audio_label}")
                 fonts_dir = Path(__file__).resolve().parents[2] / "assets" / "fonts"
                 if fonts_dir.exists():
                     escaped_fonts = _escape_ffmpeg_filter_path(str(fonts_dir))
                     filter_parts.append(f"[vcat]ass='{escaped_ass}':fontsdir='{escaped_fonts}'[vout]")
                 else:
                     filter_parts.append(f"[vcat]ass='{escaped_ass}'[vout]")
-            else:
-                filter_parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vout]{base_audio_label}")
 
             if extra_audio_labels:
                 mix_inputs = f"[abase]{''.join(extra_audio_labels)}"

@@ -83,10 +83,59 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
 class AIVSMCPServer:
     """Tenant-scoped JSON-RPC 2.0 MCP Server routing strictly through TimelineService & AgentHarness."""
 
-    def __init__(self, timeline_service: TimelineService, agent_harness: AgentHarness, store: Any) -> None:
+    def __init__(
+        self,
+        timeline_service: TimelineService,
+        agent_harness: AgentHarness,
+        store: Any,
+        plugin_registry: Any = None,
+    ) -> None:
         self._timeline = timeline_service
         self._agent = agent_harness
         self._store = store
+        self._plugins = plugin_registry
+
+    def _dynamic_plugin_tools(self) -> list[dict[str, Any]]:
+        if self._plugins is None:
+            return []
+        enabled_ids = {p["plugin_id"] for p in self._plugins.list_plugins() if p["enabled"]}
+        tools: list[dict[str, Any]] = [
+            {
+                "name": "aivs_list_plugins",
+                "description": "Read-only (L0+): List installed platform plugins, licenses, and enabled state.",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ]
+        if "motion_template_plugin" in enabled_ids:
+            tools.append(
+                {
+                    "name": "aivs_compile_motion_md",
+                    "description": "Read-only compiler (L0+): Parse Motion.md + BrandKit into candidate v3.0 EditOperations[] without mutating timeline.",
+                    "inputSchema": {
+                        "type": "object",
+                        "required": ["motion_md"],
+                        "properties": {
+                            "motion_md": {"type": "string"},
+                            "brand_kit": {"type": "object"},
+                            "subtitle_track_id": {"type": "string"},
+                            "target_clip_id": {"type": "string"},
+                        },
+                    },
+                }
+            )
+        if "anchored_review_plugin" in enabled_ids:
+            tools.append(
+                {
+                    "name": "aivs_list_review_comments",
+                    "description": "Read-only (L0+): List timecode-anchored human review comments on a timeline.",
+                    "inputSchema": {
+                        "type": "object",
+                        "required": ["timeline_id"],
+                        "properties": {"timeline_id": {"type": "string", "format": "uuid"}},
+                    },
+                }
+            )
+        return tools
 
     def handle_rpc(self, ctx: TenantContext, request: dict[str, Any]) -> dict[str, Any]:
         req_id = request.get("id")
@@ -105,10 +154,13 @@ class AIVSMCPServer:
             }
 
         if method == "tools/list":
+            tools = list(MCP_TOOLS_CATALOG)
+            if params.get("include_plugins"):
+                tools.extend(self._dynamic_plugin_tools())
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {"tools": MCP_TOOLS_CATALOG},
+                "result": {"tools": tools},
             }
 
         if method == "tools/call":
@@ -126,7 +178,7 @@ class AIVSMCPServer:
                     },
                 }
             except AppError as exc:
-                code = -32003 if exc.status_code == 403 else (-32022 if exc.status_code == 422 else -32000)
+                code = -32003 if exc.status_code in (403, 503) else (-32022 if exc.status_code == 422 else -32000)
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
@@ -163,6 +215,21 @@ class AIVSMCPServer:
             art = self._store.get(ctx, "artifacts", args["artifact_id"])
             snap_dir = str(Path(art["storage_key"]).parent / f"mcp_vis_{args['artifact_id'][:8]}")
             return self._agent.inspect_rendered_frames(ctx, art["storage_key"], save_dir=snap_dir)
+        if self._plugins is not None:
+            if tool_name == "aivs_list_plugins":
+                return {"plugins": self._plugins.list_plugins()}
+            if tool_name == "aivs_compile_motion_md":
+                plugin = self._plugins.require_enabled("motion_template_plugin")
+                return plugin.compile_to_operations(
+                    args["motion_md"],
+                    brand_kit=args.get("brand_kit"),
+                    subtitle_track_id=args.get("subtitle_track_id"),
+                    target_clip_id=args.get("target_clip_id"),
+                )
+            if tool_name == "aivs_list_review_comments":
+                self._store.get(ctx, "timelines", args["timeline_id"])
+                plugin = self._plugins.require_enabled("anchored_review_plugin")
+                return {"comments": plugin.list_comments(ctx, args["timeline_id"])}
         raise AppError(403, "FORBIDDEN", f"Unknown or disallowed MCP tool: {tool_name}")
 
 

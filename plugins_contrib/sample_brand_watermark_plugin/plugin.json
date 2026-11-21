@@ -1,0 +1,9 @@
+{
+  "plugin_id": "sample_brand_watermark_plugin",
+  "name": "Sample Brand Watermark Preset",
+  "version": "1.0.0",
+  "category": "template",
+  "license": "Apache-2.0",
+  "description": "Reference third-party drop-in plugin providing brand-safe corner watermark placement presets.",
+  "entrypoint": "plugin.py:create_plugin"
+}

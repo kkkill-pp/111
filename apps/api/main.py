@@ -7,7 +7,8 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+import time
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from services.agent_runtime.harness import AgentHarness
@@ -17,12 +18,28 @@ from services.application.review_service import ReviewService
 from services.application.timeline_service import TimelineService
 from services.infrastructure.contracts import canonical_sha256, validate_against_schema
 from services.infrastructure.errors import AppError
+from services.infrastructure.observability import (
+    MetricsRegistry,
+    SlidingWindowRateLimiter,
+    StructuredLogger,
+    resolve_trace_id,
+)
 from services.infrastructure.pg_store import create_tenant_store
 from services.infrastructure.store import TenantContext, iso_now, require_role
 from services.media_engine.adapters.openshorts_adapter import OpenShortsAdapter, file_sha256
 from services.media_engine.capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from services.media_engine.ffmpeg_renderer import FFmpegRendererAdapter, RenderPlanCompiler
 from services.media_engine.qa_engine import QAEngine
+from services.workers.render_job_manager import RenderJobManager
+from services.plugins import PluginRegistry
+from services.plugins.plugin_loader import load_plugins_from_directory
+from services.plugins.builtin import (
+    AnchoredReviewPlugin,
+    HtmlGsapMotionPlugin,
+    MediaGatewayPlugin,
+    MotionOverlayRendererPlugin,
+    MotionTemplatePlugin,
+)
 
 
 # ---- Top-level Pydantic Request Schemas ----
@@ -105,33 +122,243 @@ class DeliveryBody(BaseModel):
     destination_type: str = "signed_download"
 
 
-def create_app(media_root: Optional[str] = None, database_url: Optional[str] = None) -> FastAPI:
+class MotionTemplateCompileBody(BaseModel):
+    motion_md: str = Field(min_length=1)
+    brand_kit: Optional[dict[str, Any]] = None
+    subtitle_track_id: Optional[str] = None
+    target_clip_id: Optional[str] = None
+
+
+class AnchoredReviewCommentBody(BaseModel):
+    timeline_version: int = Field(ge=1)
+    at_tick: int = Field(ge=0)
+    comment: str = Field(min_length=1, max_length=2000)
+    suggested_action: Optional[str] = None
+
+
+class MotionOverlayBannerBody(BaseModel):
+    project_id: str
+    kind: str = "lower_third"
+    title: str = Field(min_length=1, max_length=200)
+    subtitle: Optional[str] = None
+    brand_kit: Optional[dict[str, Any]] = None
+    width: int = Field(default=480, ge=64, le=1920)
+    height: int = Field(default=110, ge=32, le=1080)
+
+
+class MediaGatewayProviderBody(BaseModel):
+    provider: str
+    api_key: str = Field(min_length=6)
+    base_url: Optional[str] = None
+
+
+class MediaGatewayGenerateBody(BaseModel):
+    project_id: str
+    modality: str = "image"
+    prompt: str = Field(min_length=1, max_length=1000)
+    provider: str = "local_deterministic"
+    model_id: Optional[str] = None
+    duration_sec: float = Field(default=2.0, ge=0.5, le=30.0)
+
+
+class TenantPluginPolicyBody(BaseModel):
+    enabled: Optional[bool] = None
+    config: Optional[dict[str, Any]] = None
+
+
+class HtmlGsapSceneBody(BaseModel):
+    preset: str = "kinetic_title"
+    headline: str = Field(min_length=1, max_length=200)
+    subheadline: Optional[str] = None
+    brand_kit: Optional[dict[str, Any]] = None
+    width: int = Field(default=1080, ge=160, le=3840)
+    height: int = Field(default=1920, ge=160, le=3840)
+    fps: int = Field(default=30, ge=15, le=60)
+    duration_sec: float = Field(default=3.0, ge=0.5, le=30.0)
+    render_mode: str = "html_bundle"
+
+
+def create_app(
+    media_root: Optional[str] = None,
+    database_url: Optional[str] = None,
+    rate_limit_max: Optional[int] = None,
+    rate_limit_window_sec: float = 60.0,
+    max_upload_bytes: Optional[int] = None,
+    plugins_dir: Optional[str] = None,
+) -> FastAPI:
     root_dir = media_root or tempfile.mkdtemp(prefix="aivs_media_")
     store, storage_backend = create_tenant_store(media_root=root_dir, database_url=database_url)
     timeline_svc = TimelineService(store)
     review_svc = ReviewService(store)
     agent_harness = AgentHarness(timeline_svc)
-    mcp_server = AIVSMCPServer(timeline_svc, agent_harness, store)
+    plugin_registry = PluginRegistry()
+    plugin_registry.register(MotionTemplatePlugin())
+    plugin_registry.register(AnchoredReviewPlugin())
+    plugin_registry.register(MotionOverlayRendererPlugin())
+    plugin_registry.register(MediaGatewayPlugin())
+    plugin_registry.register(HtmlGsapMotionPlugin())
+    effective_plugins_dir = plugins_dir if plugins_dir is not None else os.environ.get("AIVS_PLUGINS_DIR")
+    if effective_plugins_dir:
+        load_plugins_from_directory(effective_plugins_dir, plugin_registry)
+    mcp_server = AIVSMCPServer(timeline_svc, agent_harness, store, plugin_registry=plugin_registry)
     media_adapter = OpenShortsAdapter()
     plan_compiler = RenderPlanCompiler()
     ffmpeg_renderer = FFmpegRendererAdapter()
     qa_engine = QAEngine(media_adapter)
+    render_job_mgr = RenderJobManager(max_workers=2)
+
 
     app = FastAPI(title="AI Video Studio API", version="3.0.0")
+    cors_env = os.environ.get("AIVS_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    metrics = MetricsRegistry()
+    structured_logger = StructuredLogger()
+    effective_rate_max = (
+        rate_limit_max
+        if rate_limit_max is not None
+        else int(os.environ.get("AIVS_RATE_LIMIT_MAX", "300"))
+    )
+    effective_rate_window = float(
+        os.environ.get("AIVS_RATE_LIMIT_WINDOW_SEC", str(rate_limit_window_sec))
+    )
+    rate_limiter = SlidingWindowRateLimiter(
+        max_requests=effective_rate_max,
+        window_seconds=effective_rate_window,
+    )
+    effective_max_upload = (
+        max_upload_bytes
+        if max_upload_bytes is not None
+        else int(os.environ.get("AIVS_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+    )
+
     app.state.store = store
     app.state.storage_backend = storage_backend
     app.state.agent_harness = agent_harness
+    app.state.metrics = metrics
+    app.state.structured_logger = structured_logger
+    app.state.rate_limiter = rate_limiter
+    app.state.render_job_mgr = render_job_mgr
+    app.state.plugin_registry = plugin_registry
+
+    @app.middleware("http")
+    async def observability_and_hardening_middleware(request: Request, call_next):
+        start_ts = time.perf_counter()
+        trace_id = resolve_trace_id(request.headers.get("X-Trace-Id"))
+        tenant_id = request.headers.get("X-Tenant-Id") or ""
+        path = request.url.path
+        method = request.method
+
+        def _attach_headers(resp, remaining: Optional[int] = None):
+            resp.headers["X-Trace-Id"] = trace_id
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+            resp.headers["X-Frame-Options"] = "DENY"
+            resp.headers["Referrer-Policy"] = "no-referrer"
+            if path.startswith("/api/"):
+                resp.headers["Cache-Control"] = "no-store"
+            if remaining is not None:
+                resp.headers["X-RateLimit-Remaining"] = str(remaining)
+            return resp
+
+        # 1) Upload / payload size guard
+        content_length_hdr = request.headers.get("content-length")
+        if content_length_hdr:
+            try:
+                content_length = int(content_length_hdr)
+            except ValueError:
+                content_length = 0
+            if content_length > effective_max_upload:
+                metrics.inc_upload_size_rejected()
+                duration_ms = round((time.perf_counter() - start_ts) * 1000.0, 3)
+                metrics.observe_http_request(method, path, 413, duration_ms)
+                structured_logger.log(
+                    "WARNING",
+                    "http.payload_too_large",
+                    trace_id=trace_id,
+                    tenant_id=tenant_id or None,
+                    method=method,
+                    path=path,
+                    status_code=413,
+                    content_length=content_length,
+                    max_upload_bytes=effective_max_upload,
+                    duration_ms=duration_ms,
+                )
+                return _attach_headers(
+                    JSONResponse(
+                        status_code=413,
+                        content={
+                            "code": "PAYLOAD_TOO_LARGE",
+                            "message": f"Request payload ({content_length} bytes) exceeds limit ({effective_max_upload} bytes)",
+                            "details": {"max_upload_bytes": effective_max_upload},
+                            "trace_id": trace_id,
+                        },
+                    )
+                )
+
+        # 2) Per-tenant sliding-window rate limiter (exempt /healthz and /metrics)
+        remaining: Optional[int] = None
+        if path not in ("/healthz", "/metrics"):
+            rate_key = tenant_id or (request.client.host if request.client else "anonymous")
+            allowed, remaining, retry_after = rate_limiter.check(rate_key)
+            if not allowed:
+                metrics.inc_rate_limit_rejected(rate_key)
+                duration_ms = round((time.perf_counter() - start_ts) * 1000.0, 3)
+                metrics.observe_http_request(method, path, 429, duration_ms)
+                structured_logger.log(
+                    "WARNING",
+                    "http.rate_limited",
+                    trace_id=trace_id,
+                    tenant_id=tenant_id or None,
+                    method=method,
+                    path=path,
+                    status_code=429,
+                    retry_after=retry_after,
+                    duration_ms=duration_ms,
+                )
+                resp = JSONResponse(
+                    status_code=429,
+                    content={
+                        "code": "RATE_LIMITED",
+                        "message": "Too many requests for tenant window",
+                        "details": {"retry_after_seconds": retry_after},
+                        "trace_id": trace_id,
+                    },
+                )
+                resp.headers["Retry-After"] = str(retry_after)
+                return _attach_headers(resp, remaining=0)
+
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - start_ts) * 1000.0, 3)
+        metrics.observe_http_request(method, path, response.status_code, duration_ms)
+        structured_logger.log(
+            "INFO",
+            "http.request",
+            trace_id=trace_id,
+            tenant_id=tenant_id or None,
+            method=method,
+            path=path,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+        return _attach_headers(response, remaining=remaining)
 
     @app.get("/healthz")
     def healthz():
         return {"status": "ok", "version": "3.0.0", "storage_backend": storage_backend}
+
+    @app.get("/metrics")
+    def prometheus_metrics():
+        return PlainTextResponse(
+            content=metrics.render_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     @app.get("/api/v1/capabilities")
     def list_capabilities():
@@ -140,6 +367,7 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
             "renderer": "ffmpeg",
             "storage_backend": storage_backend,
             "effects": DEFAULT_CAPABILITY_REGISTRY.list_effects(),
+            "plugins": plugin_registry.list_plugins(),
             "llm_provider": {"provider": agent_harness._llm_provider.provider_name, "model_id": agent_harness._llm_provider.model_id},
         }
 
@@ -569,6 +797,249 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
         validate_against_schema("delivery.schema.json", deliv_doc)
         store.put("deliveries", deliv_doc)
         return {"task_id": str(uuid4()), "delivery_id": deliv_id, "status": "queued", "trace_id": ctx.trace_id}
+
+    @app.post("/api/v1/timelines/{timeline_id}/render-jobs", status_code=202)
+    def create_async_render_job(
+        timeline_id: str,
+        body: CreatePreviewBody,
+        ctx: TenantContext = Depends(get_ctx),
+        idem: str = Depends(get_idem_key),
+    ):
+        require_role(ctx, ["owner", "admin", "editor"])
+        tl = store.get(ctx, "timelines", timeline_id)
+        vrows = store.query(ctx, "timeline_versions", timeline_id=timeline_id, version=body.timeline_version)
+        if not vrows:
+            raise AppError(404, "NOT_FOUND", f"Timeline version {body.timeline_version} not found")
+        snap = vrows[0]["snapshot_json"]
+        assets_map = {a["id"]: a for a in store.query(ctx, "assets", project_id=tl["project_id"])}
+
+        def _execute_render() -> dict[str, Any]:
+            plan, plan_checksum = plan_compiler.compile(snap, assets_map, render_mode="final")
+            plan_id = str(uuid4())
+            store.put(
+                "render_plans",
+                {
+                    "id": plan_id,
+                    "tenant_id": ctx.tenant_id,
+                    "project_id": tl["project_id"],
+                    "timeline_id": timeline_id,
+                    "timeline_version": body.timeline_version,
+                    "plan_checksum": plan_checksum,
+                    "plan_json": plan,
+                },
+            )
+            out_path = str(Path(store.media_root) / ctx.tenant_id / tl["project_id"] / f"async_render_{plan_id}.mp4")
+            rendered = ffmpeg_renderer.render(plan, out_path)
+            art_id = str(uuid4())
+            art_rec = {
+                "id": art_id,
+                "tenant_id": ctx.tenant_id,
+                "project_id": tl["project_id"],
+                "render_job_id": None,
+                "timeline_id": timeline_id,
+                "timeline_version": body.timeline_version,
+                "artifact_type": "final_video",
+                "storage_key": rendered["output_path"],
+                "checksum_sha256": rendered["checksum_sha256"],
+                "size_bytes": rendered["size_bytes"],
+                "status": "ready",
+                "created_by_lease_token": 1,
+                "metadata": {
+                    "render_plan_id": plan_id,
+                    "encoder_used": rendered["encoder_used"],
+                },
+                "created_at": iso_now(),
+            }
+            validate_against_schema("artifact.schema.json", art_rec)
+            store.put("artifacts", art_rec)
+            report = qa_engine.run_qa(art_id, art_rec["storage_key"], art_rec["checksum_sha256"], plan)
+            store.put("qa_reports", {"id": report["qa_report_id"], "tenant_id": ctx.tenant_id, "project_id": tl["project_id"], **report})
+            return {"render_plan_id": plan_id, "artifact_id": art_id, "qa_report_id": report["qa_report_id"]}
+
+        job = render_job_mgr.submit_job(ctx, timeline_id, body.timeline_version, "final", _execute_render)
+        return {**job, "trace_id": ctx.trace_id}
+
+    @app.get("/api/v1/render-jobs/{job_id}")
+    def get_async_render_job(job_id: str, ctx: TenantContext = Depends(get_ctx)):
+        return render_job_mgr.get_job(ctx, job_id)
+
+    @app.post("/api/v1/render-jobs/{job_id}/cancel")
+    def cancel_async_render_job(job_id: str, ctx: TenantContext = Depends(get_ctx), idem: str = Depends(get_idem_key)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        return render_job_mgr.cancel_job(ctx, job_id)
+
+    @app.get("/api/v1/plugins")
+    def list_plugins(category: Optional[str] = None):
+        return {"plugins": plugin_registry.list_plugins(category=category)}
+
+    @app.post("/api/v1/plugins/{plugin_id}/enable")
+    def enable_plugin(plugin_id: str, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin"])
+        return plugin_registry.enable(plugin_id)
+
+    @app.post("/api/v1/plugins/{plugin_id}/disable")
+    def disable_plugin(plugin_id: str, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin"])
+        return plugin_registry.disable(plugin_id)
+
+    @app.get("/api/v1/tenant/plugins")
+    def list_tenant_plugins(category: Optional[str] = None, ctx: TenantContext = Depends(get_ctx)):
+        return {"plugins": plugin_registry.list_plugins_for_tenant(ctx.tenant_id, category=category)}
+
+    @app.put("/api/v1/tenant/plugins/{plugin_id}")
+    def update_tenant_plugin_policy(
+        plugin_id: str,
+        body: TenantPluginPolicyBody,
+        ctx: TenantContext = Depends(get_ctx),
+    ):
+        require_role(ctx, ["owner", "admin"])
+        res = plugin_registry.set_tenant_policy(ctx.tenant_id, plugin_id, enabled=body.enabled, config=body.config)
+        store.add_audit(ctx, "user", ctx.user_id, "plugin.tenant_policy_updated", "plugin", plugin_id)
+        return res
+
+    @app.post("/api/v1/plugins/motion-template/compile")
+    def compile_motion_template(body: MotionTemplateCompileBody, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        plugin, tcfg = plugin_registry.require_enabled_for_tenant(MotionTemplatePlugin.PLUGIN_ID, ctx.tenant_id)
+        merged_brand_kit = {**(tcfg.get("brand_kit") or {}), **(body.brand_kit or {})}
+        return plugin.compile_to_operations(  # type: ignore
+            body.motion_md,
+            brand_kit=merged_brand_kit or None,
+            subtitle_track_id=body.subtitle_track_id,
+            target_clip_id=body.target_clip_id,
+        )
+
+    @app.post("/api/v1/timelines/{timeline_id}/review-comments", status_code=201)
+    def add_anchored_review_comment(
+        timeline_id: str,
+        body: AnchoredReviewCommentBody,
+        ctx: TenantContext = Depends(get_ctx),
+    ):
+        require_role(ctx, ["owner", "admin", "editor", "reviewer"])
+        store.get(ctx, "timelines", timeline_id)
+        plugin, _ = plugin_registry.require_enabled_for_tenant(AnchoredReviewPlugin.PLUGIN_ID, ctx.tenant_id)
+        return plugin.add_comment(ctx, timeline_id, body.timeline_version, body.at_tick, body.comment, body.suggested_action)
+
+    @app.get("/api/v1/timelines/{timeline_id}/review-comments")
+    def list_anchored_review_comments(timeline_id: str, ctx: TenantContext = Depends(get_ctx)):
+        store.get(ctx, "timelines", timeline_id)
+        plugin, _ = plugin_registry.require_enabled_for_tenant(AnchoredReviewPlugin.PLUGIN_ID, ctx.tenant_id)
+        return {"comments": plugin.list_comments(ctx, timeline_id)}
+
+    @app.post("/api/v1/review-comments/{comment_id}/resolve")
+    def resolve_anchored_review_comment(comment_id: str, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor", "reviewer"])
+        plugin, _ = plugin_registry.require_enabled_for_tenant(AnchoredReviewPlugin.PLUGIN_ID, ctx.tenant_id)
+        return plugin.resolve_comment(ctx, comment_id)
+
+    @app.post("/api/v1/plugins/motion-overlay/render-banner", status_code=201)
+    def render_motion_overlay_banner(body: MotionOverlayBannerBody, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        store.get(ctx, "projects", body.project_id)
+        plugin, _tcfg = plugin_registry.require_enabled_for_tenant(MotionOverlayRendererPlugin.PLUGIN_ID, ctx.tenant_id)
+        asset_id = str(uuid4())
+        out_png = str(Path(store.media_root) / ctx.tenant_id / body.project_id / f"overlay_{asset_id}.png")
+        rendered = plugin.render_banner_png(
+            kind=body.kind,
+            title=body.title,
+            output_path=out_png,
+            subtitle=body.subtitle,
+            brand_kit=body.brand_kit,
+            width=body.width,
+            height=body.height,
+        )
+        asset_rec = {
+            "id": asset_id,
+            "tenant_id": ctx.tenant_id,
+            "project_id": body.project_id,
+            "kind": "image",
+            "filename": f"{body.kind}_{asset_id[:8]}.png",
+            "storage_key": rendered["output_path"],
+            "checksum_sha256": file_sha256(rendered["output_path"]),
+            "size_bytes": rendered["size_bytes"],
+            "status": "ready",
+            "created_at": iso_now(),
+        }
+        store.put("assets", asset_rec)
+        return {"asset_id": asset_id, **rendered}
+
+    @app.get("/api/v1/plugins/media-gateway/models")
+    def list_media_gateway_models(ctx: TenantContext = Depends(get_ctx)):
+        plugin, _ = plugin_registry.require_enabled_for_tenant(MediaGatewayPlugin.PLUGIN_ID, ctx.tenant_id)
+        return plugin.list_catalog(ctx)
+
+    @app.post("/api/v1/plugins/media-gateway/providers")
+    def configure_media_gateway_provider(body: MediaGatewayProviderBody, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin"])
+        plugin, _ = plugin_registry.require_enabled_for_tenant(MediaGatewayPlugin.PLUGIN_ID, ctx.tenant_id)
+        return plugin.configure_provider(ctx, body.provider, body.api_key, body.base_url)
+
+    @app.post("/api/v1/plugins/media-gateway/generate", status_code=201)
+    def generate_media_candidate(body: MediaGatewayGenerateBody, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        store.get(ctx, "projects", body.project_id)
+        plugin, _ = plugin_registry.require_enabled_for_tenant(MediaGatewayPlugin.PLUGIN_ID, ctx.tenant_id)
+        return plugin.generate_candidate(
+            ctx,
+            project_id=body.project_id,
+            modality=body.modality,
+            prompt=body.prompt,
+            output_dir=store.media_root,
+            provider=body.provider,
+            model_id=body.model_id,
+            duration_sec=body.duration_sec,
+        )
+
+    @app.post("/api/v1/plugins/media-gateway/candidates/{candidate_id}/adopt")
+    def adopt_media_candidate(candidate_id: str, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        plugin, _ = plugin_registry.require_enabled_for_tenant(MediaGatewayPlugin.PLUGIN_ID, ctx.tenant_id)
+        adopted = plugin.adopt_candidate(ctx, candidate_id)
+        asset_id = adopted["adopted_asset_id"]
+        asset_rec = {
+            "id": asset_id,
+            "tenant_id": ctx.tenant_id,
+            "project_id": adopted["project_id"],
+            "kind": adopted["asset_kind"],
+            "filename": adopted["filename"],
+            "storage_key": adopted["storage_key"],
+            "checksum_sha256": adopted["checksum_sha256"],
+            "size_bytes": adopted["size_bytes"],
+            "status": "ready",
+            "created_at": iso_now(),
+        }
+        store.put("assets", asset_rec)
+        return {
+            "candidate_id": candidate_id,
+            "asset_id": asset_id,
+            "kind": adopted["asset_kind"],
+            "filename": adopted["filename"],
+            "checksum_sha256": adopted["checksum_sha256"],
+        }
+
+    @app.get("/api/v1/plugins/html-gsap/runtime")
+    def html_gsap_runtime(ctx: TenantContext = Depends(get_ctx)):
+        plugin, _ = plugin_registry.require_enabled_for_tenant(HtmlGsapMotionPlugin.PLUGIN_ID, ctx.tenant_id)
+        return plugin.runtime_info()  # type: ignore
+
+    @app.post("/api/v1/plugins/html-gsap/build-scene", status_code=201)
+    def html_gsap_build_scene(body: HtmlGsapSceneBody, ctx: TenantContext = Depends(get_ctx)):
+        require_role(ctx, ["owner", "admin", "editor"])
+        plugin, tcfg = plugin_registry.require_enabled_for_tenant(HtmlGsapMotionPlugin.PLUGIN_ID, ctx.tenant_id)
+        merged_kit = {**(tcfg.get("brand_kit") or {}), **(body.brand_kit or {})}
+        out_dir = str(Path(store.media_root) / ctx.tenant_id / "gsap_scenes")
+        return plugin.build_scene(  # type: ignore
+            preset=body.preset,
+            headline=body.headline,
+            output_dir=out_dir,
+            subheadline=body.subheadline,
+            brand_kit=merged_kit or None,
+            width=body.width,
+            height=body.height,
+            fps=body.fps,
+            duration_sec=body.duration_sec,
+            render_mode=body.render_mode,
+        )
 
     return app
 

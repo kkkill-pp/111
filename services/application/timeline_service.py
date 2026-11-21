@@ -392,6 +392,70 @@ class TimelineService:
                             changes.append({"operation_id": op["operation_id"], "type": otype, "overlay_id": payload["overlay_id"]})
                 if not removed:
                     raise AppError(422, "VALIDATION_ERROR", f"Overlay {payload['overlay_id']} not found")
+            elif otype == "MERGE_CLIP":
+                first_id = payload["first_clip_id"]
+                second_id = payload["second_clip_id"]
+                if first_id == second_id:
+                    raise AppError(422, "VALIDATION_ERROR", "MERGE_CLIP requires two distinct clip IDs")
+                found_track = None
+                first_clip = None
+                second_clip = None
+                for tr in next_snap["tracks"]:
+                    if tr["type"] in ("video", "audio"):
+                        by_id = {c["id"]: c for c in tr["clips"]}
+                        if first_id in by_id and second_id in by_id:
+                            found_track = tr
+                            first_clip = by_id[first_id]
+                            second_clip = by_id[second_id]
+                            break
+                if not found_track or not first_clip or not second_clip:
+                    raise AppError(422, "VALIDATION_ERROR", "MERGE_CLIP requires both clips on the same video/audio track")
+                if first_clip["asset_id"] != second_clip["asset_id"]:
+                    raise AppError(422, "VALIDATION_ERROR", "MERGE_CLIP requires clips from the same source asset")
+                if first_clip.get("playback_rate", 1.0) != second_clip.get("playback_rate", 1.0):
+                    raise AppError(422, "VALIDATION_ERROR", "MERGE_CLIP requires matching playback_rate")
+                if first_clip["timeline_start"] + first_clip["duration"] != second_clip["timeline_start"]:
+                    raise AppError(422, "VALIDATION_ERROR", "MERGE_CLIP requires contiguous timeline placement")
+                if first_clip["source_range"]["out"] != second_clip["source_range"]["in"]:
+                    raise AppError(422, "VALIDATION_ERROR", "MERGE_CLIP requires contiguous source_out == source_in")
+                first_clip["source_range"]["out"] = second_clip["source_range"]["out"]
+                first_clip["duration"] = first_clip["duration"] + second_clip["duration"]
+                found_track["clips"] = [c for c in found_track["clips"] if c["id"] != second_id]
+                clips_affected += 2
+                changes.append({"operation_id": op["operation_id"], "type": otype, "merged_clip_id": first_id, "removed_clip_id": second_id})
+            elif otype == "REORDER_CLIP":
+                track_id = payload["track_id"]
+                ordered_ids = payload["ordered_clip_ids"]
+                target_track = next((tr for tr in next_snap["tracks"] if tr["id"] == track_id and tr["type"] in ("video", "audio")), None)
+                if not target_track:
+                    raise AppError(422, "VALIDATION_ERROR", f"Track {track_id} not found for REORDER_CLIP")
+                existing_by_id = {c["id"]: c for c in target_track["clips"]}
+                if len(ordered_ids) != len(existing_by_id) or set(ordered_ids) != set(existing_by_id.keys()):
+                    raise AppError(422, "VALIDATION_ERROR", "REORDER_CLIP ordered_clip_ids must be an exact permutation of track clips")
+                reordered = []
+                cursor = 0
+                for cid in ordered_ids:
+                    c = existing_by_id[cid]
+                    c["timeline_start"] = cursor
+                    cursor += c["duration"]
+                    reordered.append(c)
+                target_track["clips"] = reordered
+                clips_affected += len(reordered)
+                changes.append({"operation_id": op["operation_id"], "type": otype, "track_id": track_id, "ordered_clip_ids": ordered_ids})
+            elif otype == "SET_CANVAS_PROFILE":
+                width = int(payload["width"])
+                height = int(payload["height"])
+                fr = payload["frame_rate"]
+                if width < 16 or width % 2 != 0 or height < 16 or height % 2 != 0:
+                    raise AppError(422, "VALIDATION_ERROR", "SET_CANVAS_PROFILE requires even width/height >= 16")
+                if int(fr.get("num", 0)) < 1 or int(fr.get("den", 0)) < 1:
+                    raise AppError(422, "VALIDATION_ERROR", "SET_CANVAS_PROFILE requires positive rational frame_rate")
+                next_snap["profile"]["width"] = width
+                next_snap["profile"]["height"] = height
+                next_snap["profile"]["frame_rate"] = {"num": int(fr["num"]), "den": int(fr["den"])}
+                if "audio_sample_rate" in payload and payload["audio_sample_rate"] is not None:
+                    next_snap["profile"]["audio_sample_rate"] = int(payload["audio_sample_rate"])
+                changes.append({"operation_id": op["operation_id"], "type": otype, "width": width, "height": height, "frame_rate": next_snap["profile"]["frame_rate"]})
             else:
                 raise AppError(
                     422,

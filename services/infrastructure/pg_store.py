@@ -37,6 +37,8 @@ ALLOWED_TABLES = frozenset({
     "qa_reports",
     "deliveries",
     "audit_events",
+    "tenant_plugin_policies",
+    "anchored_review_comments",
 })
 
 
@@ -468,6 +470,41 @@ class PostgresTenantStore:
         if not review_id:
             raise AppError(409, "APPROVAL_EXPIRED", "Invalid, expired, wrong-user, stale-version, or already consumed approval token")
         return str(review_id)
+
+
+    def upsert_tenant_plugin_policy(
+        self,
+        ctx: TenantContext,
+        plugin_id: str,
+        enabled: bool,
+        config_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        from psycopg.types.json import Jsonb
+
+        with self._tenant_cursor(ctx.tenant_id) as cur:
+            cur.execute(
+                '''
+                INSERT INTO public.tenant_plugin_policies (tenant_id, plugin_id, enabled, config_json, updated_by)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (tenant_id, plugin_id)
+                DO UPDATE SET
+                    enabled = EXCLUDED.enabled,
+                    config_json = EXCLUDED.config_json,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = clock_timestamp()
+                RETURNING tenant_id, plugin_id, enabled, config_json, updated_by, updated_at
+                ''',
+                (ctx.tenant_id, plugin_id, bool(enabled), Jsonb(config_json), ctx.user_id),
+            )
+            row = cur.fetchone()
+            return self._normalize_row(row) if row else {}
+
+    def list_tenant_plugin_policies(self, ctx: TenantContext) -> list[dict[str, Any]]:
+        with self._tenant_cursor(ctx.tenant_id) as cur:
+            cur.execute(
+                "SELECT tenant_id, plugin_id, enabled, config_json, updated_by, updated_at FROM public.tenant_plugin_policies ORDER BY plugin_id"
+            )
+            return [self._normalize_row(r) for r in cur.fetchall()]
 
 
 def create_tenant_store(media_root: str, database_url: str | None = None):

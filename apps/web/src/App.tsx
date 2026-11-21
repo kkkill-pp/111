@@ -6,6 +6,7 @@ import type {
   VideoClipV3,
 } from "../../../packages/shared-types/src/v3-contracts";
 import { AgentProposalPanel } from "./components/AgentProposalPanel";
+import { PluginCenterPanel } from "./components/PluginCenterPanel";
 import { TimelineCanvas } from "./components/TimelineCanvas";
 import {
   type ApiConnectionConfig,
@@ -114,7 +115,7 @@ export function App(): React.ReactElement {
   const [zoomPxPerSec, setZoomPxPerSec] = useState<number>(90);
   const [snapEnabled, setSnapEnabled] = useState<boolean>(true);
   const [rippleEnabled, setRippleEnabled] = useState<boolean>(false);
-  const [rightTab, setRightTab] = useState<"inspector" | "agent">("inspector");
+  const [rightTab, setRightTab] = useState<"inspector" | "agent" | "plugins">("inspector");
   const [statusLog, setStatusLog] = useState<string>("就绪（支持导入本地 MP4 实时预览；勾选连接后端可实跑 FFmpeg 导出与下载）");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -296,6 +297,62 @@ export function App(): React.ReactElement {
     }
   };
 
+  const handleExportOtio = async () => {
+    if (!apiCfg.enabled) {
+      setStatusLog("演示模式：勾选连接后端 API 后可一键导出 OpenTimelineIO (.otio) 工程文件。");
+      return;
+    }
+    try {
+      const resp = await fetch(`${apiCfg.apiBase}/timelines/${timeline.timeline_id}/export/otio`, {
+        headers: { "X-Tenant-Id": apiCfg.tenantId, "X-User-Id": apiCfg.userId, "X-User-Role": apiCfg.role },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const otio = await resp.json();
+      const blob = new Blob([JSON.stringify(otio, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `timeline_v${timeline.version}.otio`;
+      a.click();
+      setStatusLog(`已导出 OpenTimelineIO 工程 (v${timeline.version})`);
+    } catch (err) {
+      setStatusLog(`OTIO 导出失败: ${(err as Error).message}`);
+    }
+  };
+
+  const handleSetCanvasProfile = async (width: number, height: number, label: string) => {
+    if (!apiCfg.enabled) {
+      setStatusLog(`演示模式：已选择画布预设 ${label} (${width}x${height})`);
+      return;
+    }
+    try {
+      const capResp = await fetch(`${apiCfg.apiBase}/capabilities`);
+      const capInfo = capResp.ok ? await capResp.json() : null;
+      const resp = await fetch(`${apiCfg.apiBase}/timelines/${timeline.timeline_id}/operations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-Id": apiCfg.tenantId,
+          "X-User-Id": apiCfg.userId,
+          "X-User-Role": apiCfg.role,
+          "Idempotency-Key": `canvas-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          base_version: timeline.version,
+          operations: [{
+            operation_id: crypto.randomUUID(),
+            operation_type: "SET_CANVAS_PROFILE",
+            payload: { width, height, frame_rate: { num: 30, den: 1 } },
+          }],
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      setStatusLog(`已切换画布 ${label} (${width}x${height}) · 渲染引擎=${capInfo?.renderer || "ffmpeg"}`);
+    } catch (err) {
+      setStatusLog(`画布切换失败: ${(err as Error).message}`);
+    }
+  };
+
   const subTrackId = timeline.tracks.find((t) => t.type === "subtitle")?.id || "";
 
   return (
@@ -321,6 +378,19 @@ export function App(): React.ReactElement {
           <label style={{ fontSize: 11, color: "#94A3B8" }}>
             <input type="checkbox" checked={apiCfg.enabled} onChange={(e) => setApiCfg({ ...apiCfg, enabled: e.target.checked })} /> 连接后端 API
           </label>
+          <select
+            aria-label="Canvas Profile"
+            onChange={(e) => {
+              const [w, h, lbl] = e.target.value.split("|");
+              void handleSetCanvasProfile(Number(w), Number(h), lbl);
+            }}
+            style={{ background: "#1E293B", color: "#F8FAFC", border: "1px solid #334155", borderRadius: 4, fontSize: 11, padding: "3px 6px" }}
+          >
+            <option value="1080|1920|9:16 竖屏">9:16 竖屏</option>
+            <option value="1920|1080|16:9 横屏">16:9 横屏</option>
+            <option value="1080|1080|1:1 方形">1:1 方形</option>
+          </select>
+          <button onClick={() => void handleExportOtio()}>导出 OTIO</button>
           <button onClick={() => void handleExport("preview")}>预览渲染</button>
           <button onClick={() => void handleExport("final")} style={{ background: "#2563EB", color: "#fff", border: "none", padding: "4px 10px", borderRadius: 4 }}>
             导出 MP4 (FFmpeg)
@@ -460,10 +530,15 @@ export function App(): React.ReactElement {
               属性检查器
             </button>
             <button onClick={() => setRightTab("agent")} style={{ flex: 1, background: rightTab === "agent" ? "#4F46E5" : "#1E293B", color: "#fff", border: "none", padding: "5px 6px", borderRadius: 4, fontSize: 12 }}>
-              🤖 AI 提案审阅
+              🤖 AI 提案
+            </button>
+            <button onClick={() => setRightTab("plugins")} style={{ flex: 1, background: rightTab === "plugins" ? "#0E7490" : "#1E293B", color: "#fff", border: "none", padding: "5px 6px", borderRadius: 4, fontSize: 12 }}>
+              🧩 插件
             </button>
           </div>
-          {rightTab === "agent" ? (
+          {rightTab === "plugins" ? (
+            <PluginCenterPanel apiCfg={apiCfg} onStatus={setStatusLog} />
+          ) : rightTab === "agent" ? (
             <AgentProposalPanel
               timeline={timeline}
               apiCfg={apiCfg}
