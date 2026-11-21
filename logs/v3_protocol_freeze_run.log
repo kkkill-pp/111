@@ -4,6 +4,8 @@ test_license_redline_zero_cloud_and_zero_ultralytics (test_openshorts_adapter.Op
 test_vendored_clip_selection_and_ffmpeg_utils (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_clip_selection_and_ffmpeg_utils) ... ok
 test_vendored_frame_sampler_and_commercial_safe_person_detector (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_frame_sampler_and_commercial_safe_person_detector) ... ok
 test_vendored_ssrf_guard_blocks_internal_and_metadata_ips (test_openshorts_adapter.OpenShortsAdapterIntegrationTest.test_vendored_ssrf_guard_blocks_internal_and_metadata_ips) ... ok
+test_live_pg15_http_api_e2e_workspace_project_timeline_undo_redo_and_fk_409 (test_pg_store_integration.PostgresStoreLivePG15Test.test_live_pg15_http_api_e2e_workspace_project_timeline_undo_redo_and_fk_409)
+Real HTTP API -> FastAPI -> PostgresTenantStore -> PostgreSQL 15 E2E (RLS + Optimistic Lock + Undo/Redo + 409 FK). ... skipped 'Set DATABASE_URL to run live PostgreSQL 15+ psycopg persistence & RLS tests'
 test_live_pg15_rls_isolation_render_plan_immutability_and_atomic_token (test_pg_store_integration.PostgresStoreLivePG15Test.test_live_pg15_rls_isolation_render_plan_immutability_and_atomic_token) ... skipped 'Set DATABASE_URL to run live PostgreSQL 15+ psycopg persistence & RLS tests'
 test_factory_selects_postgresql_when_dsn_provided_and_in_memory_otherwise (test_pg_store_integration.PostgresStoreOfflineUnitTest.test_factory_selects_postgresql_when_dsn_provided_and_in_memory_otherwise) ... ok
 test_healthz_reports_storage_backend (test_pg_store_integration.PostgresStoreOfflineUnitTest.test_healthz_reports_storage_backend) ... ok
@@ -24,6 +26,6 @@ test_timeline_service_rejects_unimplemented_ops_and_applies_volume (test_vertica
 P0 §2.1 regression: unimplemented ops MUST fail 422 (zero silent no-ops); UPDATE_VOLUME mutates snapshot. ... ok
 
 ----------------------------------------------------------------------
-Ran 16 tests in 9.010s
+Ran 17 tests in 7.785s
 
-OK (skipped=1)
+OK (skipped=2)

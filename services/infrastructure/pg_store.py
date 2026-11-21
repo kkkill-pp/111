@@ -62,6 +62,18 @@ class PostgresTenantStore:
         return psycopg.connect(self.database_url, row_factory=dict_row)
 
     @staticmethod
+    def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for k, v in dict(row).items():
+            if hasattr(v, "hex"):
+                out[k] = str(v)
+            elif hasattr(v, "isoformat"):
+                out[k] = v.isoformat()
+            else:
+                out[k] = v
+        return out
+
+    @staticmethod
     def _jsonb(val: Any):
         from psycopg.types.json import Jsonb
         return Jsonb(val)
@@ -106,152 +118,157 @@ class PostgresTenantStore:
         if not tenant_id:
             raise AppError(500, "INTERNAL_ERROR", f"Missing tenant_id on {table}")
 
-        with self._tenant_tx(str(tenant_id)) as cur:
-            if table == "workspaces":
-                cur.execute(
-                    """
-                    INSERT INTO public.workspaces (id, tenant_id, name, status, hitl_policy_json, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, updated_at = now()
-                    """,
-                    (
-                        record["id"], tenant_id, record["name"], record.get("status", "active"),
-                        self._jsonb(record.get("hitl_policy", {})), record.get("created_by"),
-                    ),
-                )
-            elif table == "projects":
-                cur.execute(
-                    """
-                    INSERT INTO public.projects (id, tenant_id, workspace_id, name, description, status, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, status = EXCLUDED.status, updated_at = now()
-                    """,
-                    (
-                        record["id"], tenant_id, record["workspace_id"], record["name"],
-                        record.get("description"), record.get("status", "active"), record.get("created_by"),
-                    ),
-                )
-            elif table == "timelines":
-                cur.execute(
-                    """
-                    INSERT INTO public.timelines (id, tenant_id, project_id, name, current_version, profile_json, status, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET current_version = EXCLUDED.current_version, status = EXCLUDED.status, updated_at = now()
-                    """,
-                    (
-                        record["id"], tenant_id, record["project_id"], record.get("name", "Main Timeline"),
-                        int(record.get("current_version", 1)), self._jsonb(record.get("profile_json", record.get("profile", {}))),
-                        record.get("status", "active"), record.get("created_by"),
-                    ),
-                )
-            elif table == "timeline_versions":
-                cur.execute(
-                    """
-                    INSERT INTO public.timeline_versions (
-                      id, tenant_id, timeline_id, version, parent_version, origin_command,
-                      restored_from_version, snapshot_json, snapshot_checksum,
-                      created_by_type, created_by_id, undo_scope
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        record["id"], tenant_id, record["timeline_id"], int(record["version"]),
-                        record.get("parent_version"), record.get("origin_command", "edit"),
-                        record.get("restored_from_version"), self._jsonb(record["snapshot_json"]),
-                        record["snapshot_checksum"], record.get("created_by_type", "user"),
-                        str(record.get("created_by_id", "system")), record.get("undo_scope", "user_edit"),
-                    ),
-                )
-            elif table == "edit_proposals":
-                cur.execute(
-                    """
-                    INSERT INTO public.edit_proposals (
-                      id, tenant_id, timeline_id, base_version, result_version, status,
-                      actor_type, actor_id, originating_user_id, originating_request_id,
-                      user_intent, rationale, risk_level, evidence_refs_json, diff_json,
-                      impact_summary_json, proposal_checksum, idempotency_key, agent_permission_level
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, result_version = EXCLUDED.result_version, updated_at = now()
-                    """,
-                    (
-                        record["id"], tenant_id, record["timeline_id"], int(record["base_version"]),
-                        record.get("result_version"), record.get("status", "draft"),
-                        record["actor"]["type"], record["actor"]["id"],
-                        record.get("originating_user_id"), record.get("originating_request_id", str(uuid4())),
-                        record.get("user_intent"), record.get("rationale", "proposal"),
-                        record.get("risk_level", "medium"), self._jsonb(record.get("evidence_refs", [])),
-                        self._jsonb(record.get("diff", {})), self._jsonb(record.get("impact_summary", {})),
-                        record["proposal_checksum"], record.get("idempotency_key", f"prop-{record['id']}"),
-                        record.get("agent_permission_level", "L1"),
-                    ),
-                )
-            elif table == "human_reviews":
-                cur.execute(
-                    """
-                    INSERT INTO public.human_reviews (
-                      id, tenant_id, project_id, subject_type, subject_id, subject_version,
-                      subject_checksum, status, decision, reviewer_id, requested_by_type,
-                      requested_by_id, comment, selected_items_json, rejected_items_json,
-                      idempotency_key, decided_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decision = EXCLUDED.decision, updated_at = now()
-                    """,
-                    (
-                        record["id"], tenant_id, record["project_id"], record["subject_type"],
-                        record["subject_id"], str(record["subject_version"]), record["subject_checksum"],
-                        record["status"], record.get("decision"), record.get("reviewer_id"),
-                        record.get("requested_by_type", "user"), str(record.get("requested_by_id", "user")),
-                        record.get("comment"), self._jsonb(record.get("selected_items", [])),
-                        self._jsonb(record.get("rejected_items", [])),
-                        record.get("idempotency_key", f"rev-{record['id']}"), record.get("decided_at"),
-                    ),
-                )
-            elif table == "approval_tokens":
-                cur.execute(
-                    """
-                    INSERT INTO public.approval_tokens (
-                      id, tenant_id, project_id, human_review_id, subject_type, subject_id,
-                      bound_version, bound_checksum, token_hash, issued_to_user_id, expires_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        record["id"], tenant_id, record.get("project_id"), record["human_review_id"],
-                        record["subject_type"], record["subject_id"], str(record["bound_version"]),
-                        record["bound_checksum"], record["token_hash"], record["issued_to_user_id"],
-                        record["expires_at"],
-                    ),
-                )
-            elif table == "render_plans":
-                cur.execute(
-                    """
-                    INSERT INTO public.render_plans (
-                      id, tenant_id, project_id, timeline_id, timeline_version,
-                      render_mode, renderer, plan_version, plan_json, plan_checksum, created_by
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        record["id"], tenant_id, record["project_id"], record["timeline_id"],
-                        int(record["timeline_version"]), record.get("render_mode", "preview"),
-                        "ffmpeg", record.get("plan_version", "3.0"), self._jsonb(record["plan_json"]),
-                        record["plan_checksum"], record.get("created_by"),
-                    ),
-                )
-            elif table == "artifacts":
-                cur.execute(
-                    """
-                    INSERT INTO public.artifacts (
-                      id, tenant_id, project_id, timeline_id, timeline_version, artifact_type,
-                      storage_key, checksum_sha256, size_bytes, metadata_json, status, created_by_lease_token
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
-                    """,
-                    (
-                        record["id"], tenant_id, record["project_id"], record.get("timeline_id"),
-                        record.get("timeline_version"), record["artifact_type"], record["storage_key"],
-                        record["checksum_sha256"], int(record["size_bytes"]),
-                        self._jsonb(record.get("metadata", {})), record.get("status", "ready"),
-                        record.get("created_by_lease_token", 1),
-                    ),
-                )
+        try:
+            with self._tenant_tx(str(tenant_id)) as cur:
+                if table == "workspaces":
+                    cur.execute(
+                        """
+                        INSERT INTO public.workspaces (id, tenant_id, name, status, hitl_policy_json, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["name"], record.get("status", "active"),
+                            self._jsonb(record.get("hitl_policy", {})), record.get("created_by"),
+                        ),
+                    )
+                elif table == "projects":
+                    cur.execute(
+                        """
+                        INSERT INTO public.projects (id, tenant_id, workspace_id, name, description, status, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, status = EXCLUDED.status, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["workspace_id"], record["name"],
+                            record.get("description"), record.get("status", "active"), record.get("created_by"),
+                        ),
+                    )
+                elif table == "timelines":
+                    cur.execute(
+                        """
+                        INSERT INTO public.timelines (id, tenant_id, project_id, name, current_version, profile_json, status, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET current_version = EXCLUDED.current_version, status = EXCLUDED.status, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record.get("name", "Main Timeline"),
+                            int(record.get("current_version", 1)), self._jsonb(record.get("profile_json", record.get("profile", {}))),
+                            record.get("status", "active"), record.get("created_by"),
+                        ),
+                    )
+                elif table == "timeline_versions":
+                    cur.execute(
+                        """
+                        INSERT INTO public.timeline_versions (
+                          id, tenant_id, timeline_id, version, parent_version, origin_command,
+                          restored_from_version, snapshot_json, snapshot_checksum,
+                          created_by_type, created_by_id, undo_scope
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            record["id"], tenant_id, record["timeline_id"], int(record["version"]),
+                            record.get("parent_version"), record.get("origin_command", "edit"),
+                            record.get("restored_from_version"), self._jsonb(record["snapshot_json"]),
+                            record["snapshot_checksum"], record.get("created_by_type", "user"),
+                            str(record.get("created_by_id", "system")), record.get("undo_scope", "user_edit"),
+                        ),
+                    )
+                elif table == "edit_proposals":
+                    cur.execute(
+                        """
+                        INSERT INTO public.edit_proposals (
+                          id, tenant_id, timeline_id, base_version, result_version, status,
+                          actor_type, actor_id, originating_user_id, originating_request_id,
+                          user_intent, rationale, risk_level, evidence_refs_json, diff_json,
+                          impact_summary_json, proposal_checksum, idempotency_key, agent_permission_level
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, result_version = EXCLUDED.result_version, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["timeline_id"], int(record["base_version"]),
+                            record.get("result_version"), record.get("status", "draft"),
+                            record["actor"]["type"], record["actor"]["id"],
+                            record.get("originating_user_id"), record.get("originating_request_id", str(uuid4())),
+                            record.get("user_intent"), record.get("rationale", "proposal"),
+                            record.get("risk_level", "medium"), self._jsonb(record.get("evidence_refs", [])),
+                            self._jsonb(record.get("diff", {})), self._jsonb(record.get("impact_summary", {})),
+                            record["proposal_checksum"], record.get("idempotency_key", f"prop-{record['id']}"),
+                            record.get("agent_permission_level", "L1"),
+                        ),
+                    )
+                elif table == "human_reviews":
+                    cur.execute(
+                        """
+                        INSERT INTO public.human_reviews (
+                          id, tenant_id, project_id, subject_type, subject_id, subject_version,
+                          subject_checksum, status, decision, reviewer_id, requested_by_type,
+                          requested_by_id, comment, selected_items_json, rejected_items_json,
+                          idempotency_key, decided_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decision = EXCLUDED.decision, updated_at = now()
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record["subject_type"],
+                            record["subject_id"], str(record["subject_version"]), record["subject_checksum"],
+                            record["status"], record.get("decision"), record.get("reviewer_id"),
+                            record.get("requested_by_type", "user"), str(record.get("requested_by_id", "user")),
+                            record.get("comment"), self._jsonb(record.get("selected_items", [])),
+                            self._jsonb(record.get("rejected_items", [])),
+                            record.get("idempotency_key", f"rev-{record['id']}"), record.get("decided_at"),
+                        ),
+                    )
+                elif table == "approval_tokens":
+                    cur.execute(
+                        """
+                        INSERT INTO public.approval_tokens (
+                          id, tenant_id, project_id, human_review_id, subject_type, subject_id,
+                          bound_version, bound_checksum, token_hash, issued_to_user_id, expires_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            record["id"], tenant_id, record.get("project_id"), record["human_review_id"],
+                            record["subject_type"], record["subject_id"], str(record["bound_version"]),
+                            record["bound_checksum"], record["token_hash"], record["issued_to_user_id"],
+                            record["expires_at"],
+                        ),
+                    )
+                elif table == "render_plans":
+                    cur.execute(
+                        """
+                        INSERT INTO public.render_plans (
+                          id, tenant_id, project_id, timeline_id, timeline_version,
+                          render_mode, renderer, plan_version, plan_json, plan_checksum, created_by
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record["timeline_id"],
+                            int(record["timeline_version"]), record.get("render_mode", "preview"),
+                            "ffmpeg", record.get("plan_version", "3.0"), self._jsonb(record["plan_json"]),
+                            record["plan_checksum"], record.get("created_by"),
+                        ),
+                    )
+                elif table == "artifacts":
+                    cur.execute(
+                        """
+                        INSERT INTO public.artifacts (
+                          id, tenant_id, project_id, timeline_id, timeline_version, artifact_type,
+                          storage_key, checksum_sha256, size_bytes, metadata_json, status, created_by_lease_token
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
+                        """,
+                        (
+                            record["id"], tenant_id, record["project_id"], record.get("timeline_id"),
+                            record.get("timeline_version"), record["artifact_type"], record["storage_key"],
+                            record["checksum_sha256"], int(record["size_bytes"]),
+                            self._jsonb(record.get("metadata", {})), record.get("status", "ready"),
+                            record.get("created_by_lease_token", 1),
+                        ),
+                    )
+        except Exception as exc:
+            if exc.__class__.__name__ == "ForeignKeyViolation":
+                raise AppError(409, "FOREIGN_KEY_VIOLATION", f"Referenced parent record missing for {table} (ensure tenant/user/parent exists)") from exc
+            raise
         return copy.deepcopy(record)
 
     def get(self, ctx: TenantContext, table: str, record_id: str) -> dict[str, Any]:
@@ -262,7 +279,7 @@ class PostgresTenantStore:
             row = cur.fetchone()
         if row is None:
             raise AppError(404, "NOT_FOUND", f"{table} resource not found")
-        return {k: (str(v) if hasattr(v, "hex") else v) for k, v in dict(row).items()}
+        return self._normalize_row(row)
 
     def query(self, ctx: TenantContext, table: str, **filters: Any) -> list[dict[str, Any]]:
         if table not in ALLOWED_TABLES:
@@ -278,7 +295,7 @@ class PostgresTenantStore:
         with self._tenant_tx(ctx.tenant_id) as cur:
             cur.execute(f"SELECT * FROM public.{table}{where_sql}", tuple(params))
             rows = cur.fetchall()
-        return [{k: (str(v) if hasattr(v, "hex") else v) for k, v in dict(r).items()} for r in rows]
+        return [self._normalize_row(r) for r in rows]
 
     def add_audit(
         self,

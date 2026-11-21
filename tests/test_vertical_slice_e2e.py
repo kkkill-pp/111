@@ -19,7 +19,7 @@ from services.media_engine.ffmpeg_renderer import FFmpegRendererAdapter, RenderP
 class VerticalSliceE2ETest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp(prefix="aivs_e2e_")
-        self.app = create_app(media_root=self.tmpdir)
+        self.app = create_app(media_root=self.tmpdir, database_url="")
         self.client = TestClient(self.app)
 
         self.tenant_a = str(uuid4())

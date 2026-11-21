@@ -20,7 +20,7 @@ from services.media_engine.ffmpeg_renderer import FFmpegRendererAdapter, RenderP
 class Phase1MultiTrackAndPixelsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp(prefix="aivs_p1_")
-        self.app = create_app(media_root=self.tmpdir)
+        self.app = create_app(media_root=self.tmpdir, database_url="")
         self.client = TestClient(self.app)
         self.tenant = str(uuid4())
         self.user = str(uuid4())
