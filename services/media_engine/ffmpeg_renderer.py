@@ -15,6 +15,7 @@ from typing import Any
 
 from services.infrastructure.contracts import canonical_sha256, validate_against_schema
 from services.infrastructure.errors import AppError
+from services.media_engine.capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from services.media_engine.adapters.openshorts_adapter import file_sha256
 
 
@@ -136,6 +137,16 @@ class RenderPlanCompiler:
                     subtitle_ops.append(item)
             elif tr["type"] == "overlay":
                 for item in tr["items"]:
+                    aid = item.get("asset_id")
+                    if aid and aid in asset_lookup:
+                        asset = asset_lookup[aid]
+                        used_assets[aid] = {
+                            "asset_id": asset["id"],
+                            "storage_key": asset["storage_key"],
+                            "checksum_sha256": asset["checksum_sha256"],
+                            "is_vfr": False,
+                            "pts_map_storage_key": None,
+                        }
                     overlay_ops.append(item)
 
         out_w = profile["width"] // 2 if render_mode == "preview" else profile["width"]
@@ -191,12 +202,14 @@ class FFmpegRendererAdapter:
 
     def _assert_supported_semantics(self, render_plan: dict[str, Any]) -> None:
         """ADR-004: Fail loudly on any unimplemented semantic feature instead of dropping it."""
-        if render_plan.get("overlay_ops"):
-            raise AppError(
-                422,
-                "VALIDATION_ERROR",
-                "overlay_ops rendering is not yet implemented in Sprint 1 FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
-            )
+        for ov in render_plan.get("overlay_ops") or []:
+            kind = ov.get("kind")
+            if kind not in ("image", "logo") or not ov.get("asset_id"):
+                raise AppError(
+                    422,
+                    "VALIDATION_ERROR",
+                    f"overlay kind='{kind}' (without image/logo asset_id) is not yet implemented in FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
+                )
         for op in render_plan.get("video_ops", []):
             mode = (op.get("transform") or {}).get("mode", "fit")
             if mode not in self.SUPPORTED_TRANSFORM_MODES:
@@ -206,12 +219,15 @@ class FFmpegRendererAdapter:
                     f"transform.mode='{mode}' is not yet implemented in Sprint 1 FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
                 )
             for tr in op.get("transitions") or []:
-                if tr.get("type") != "cut":
+                if tr.get("type") not in ("cut", "fade_in", "fade_out"):
                     raise AppError(
                         422,
                         "VALIDATION_ERROR",
                         f"transition.type='{tr.get('type')}' is not yet implemented in Sprint 1 FFmpegRendererAdapter (silent fallback forbidden by ADR-004)",
                     )
+            for fx in op.get("effects") or []:
+                if fx.get("enabled", True):
+                    DEFAULT_CAPABILITY_REGISTRY.compile_video_effect(str(fx.get("effect_type", "")), fx.get("params") or {})
 
     @staticmethod
     def _write_ass_subtitles(
@@ -249,7 +265,11 @@ class FFmpegRendererAdapter:
         ass_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def render(self, render_plan: dict[str, Any], output_path: str) -> dict[str, Any]:
-        validate_against_schema("render-plan.schema.json", render_plan)
+        plan_for_v2_schema = {
+            **render_plan,
+            "video_ops": [{k: v for k, v in op.items() if k != "effects"} for op in render_plan.get("video_ops", [])],
+        }
+        validate_against_schema("render-plan.schema.json", plan_for_v2_schema)
         self._assert_supported_semantics(render_plan)
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -287,7 +307,19 @@ class FFmpegRendererAdapter:
             v_chain = [scale_chain]
             if abs(speed - 1.0) > 1e-6:
                 v_chain.append(f"setpts=PTS/{speed:.6f}")
+            for fx in op.get("effects") or []:
+                if fx.get("enabled", True):
+                    v_chain.append(DEFAULT_CAPABILITY_REGISTRY.compile_video_effect(str(fx["effect_type"]), fx.get("params") or {}))
             v_chain.extend([f"fps={fps_str}", "format=yuv420p"])
+            eff_v_dur = dur_s / max(speed, 0.25)
+            for tr in op.get("transitions") or []:
+                tr_dur_s = (int(tr.get("duration_ticks", 0) or 0) * tb_num) / tb_den
+                if tr_dur_s <= 0:
+                    continue
+                if tr.get("type") == "fade_in":
+                    v_chain.append(f"fade=t=in:st=0:d={tr_dur_s:.6f}")
+                elif tr.get("type") == "fade_out":
+                    v_chain.append(f"fade=t=out:st={max(0.0, eff_v_dur - tr_dur_s):.6f}:d={tr_dur_s:.6f}")
             filter_parts.append(f"[{idx}:v]{','.join(v_chain)}[v{idx}]")
 
             audio_op = next((a for a in (render_plan.get("audio_ops") or []) if a.get("clip_id") == op["clip_id"] and a.get("track_type") != "audio"), None)
@@ -370,6 +402,30 @@ class FFmpegRendererAdapter:
             if extra_audio_labels:
                 mix_inputs = f"[abase]{''.join(extra_audio_labels)}"
                 filter_parts.append(f"{mix_inputs}amix=inputs={1 + len(extra_audio_labels)}:duration=first:normalize=0[aout]")
+
+            overlay_ops = render_plan.get("overlay_ops") or []
+            if overlay_ops:
+                # Rename previous [vout] to [vpreov] and chain real FFmpeg overlay filters with time enable window
+                filter_parts[-1 if not extra_audio_labels else -2] = filter_parts[-1 if not extra_audio_labels else -2].replace("[vout]", "[vpreov]")
+                cur_v = "[vpreov]"
+                base_in_idx = n + len(extra_audio_ops)
+                for k, ov in enumerate(overlay_ops):
+                    ov_idx = base_in_idx + k
+                    ov_src = asset_paths[ov["asset_id"]]
+                    inputs.extend(["-i", ov_src])
+                    scale = float(ov.get("scale", 1.0))
+                    pos_x = int(round(float(ov.get("position_x", 0.5)) * out_prof["width"]))
+                    pos_y = int(round(float(ov.get("position_y", 0.5)) * out_prof["height"]))
+                    st_s = (int(ov["timeline_start"]) * tb_num) / tb_den
+                    ed_s = ((int(ov["timeline_start"]) + int(ov["duration"])) * tb_num) / tb_den
+                    ov_lbl = f"[ovimg{k}]"
+                    if abs(scale - 1.0) > 1e-6:
+                        filter_parts.append(f"[{ov_idx}:v]scale=iw*{scale:.4f}:ih*{scale:.4f}{ov_lbl}")
+                    else:
+                        filter_parts.append(f"[{ov_idx}:v]format=rgba{ov_lbl}")
+                    next_v = "[vout]" if k == len(overlay_ops) - 1 else f"[vov{k}]"
+                    filter_parts.append(f"{cur_v}{ov_lbl}overlay=x={pos_x}:y={pos_y}:enable='between(t,{st_s:.4f},{ed_s:.4f})'{next_v}")
+                    cur_v = next_v
 
             cmd = [
                 "ffmpeg", "-y", "-loglevel", "error", "-threads", str(enc["threads"]),

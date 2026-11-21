@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from services.agent_runtime.harness import AgentHarness
+from services.agent_runtime.mcp_server import AIVSMCPServer
+from services.timeline.otio_exporter import export_timeline_to_otio
 from services.application.review_service import ReviewService
 from services.application.timeline_service import TimelineService
 from services.infrastructure.contracts import canonical_sha256, validate_against_schema
@@ -18,6 +20,7 @@ from services.infrastructure.errors import AppError
 from services.infrastructure.pg_store import create_tenant_store
 from services.infrastructure.store import TenantContext, iso_now, require_role
 from services.media_engine.adapters.openshorts_adapter import OpenShortsAdapter, file_sha256
+from services.media_engine.capability_registry import DEFAULT_CAPABILITY_REGISTRY
 from services.media_engine.ffmpeg_renderer import FFmpegRendererAdapter, RenderPlanCompiler
 from services.media_engine.qa_engine import QAEngine
 
@@ -108,6 +111,7 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
     timeline_svc = TimelineService(store)
     review_svc = ReviewService(store)
     agent_harness = AgentHarness(timeline_svc)
+    mcp_server = AIVSMCPServer(timeline_svc, agent_harness, store)
     media_adapter = OpenShortsAdapter()
     plan_compiler = RenderPlanCompiler()
     ffmpeg_renderer = FFmpegRendererAdapter()
@@ -129,6 +133,17 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
     def healthz():
         return {"status": "ok", "version": "3.0.0", "storage_backend": storage_backend}
 
+    @app.get("/api/v1/capabilities")
+    def list_capabilities():
+        return {
+            "version": "3.0.0",
+            "renderer": "ffmpeg",
+            "storage_backend": storage_backend,
+            "effects": DEFAULT_CAPABILITY_REGISTRY.list_effects(),
+            "llm_provider": {"provider": agent_harness._llm_provider.provider_name, "model_id": agent_harness._llm_provider.model_id},
+        }
+
+
     def get_ctx(
         x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
         x_user_id: str = Header(..., alias="X-User-Id"),
@@ -144,6 +159,11 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
 
     def get_idem_key(idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200)) -> str:
         return idempotency_key
+
+    @app.post("/api/v1/mcp/rpc", status_code=200)
+    async def mcp_rpc_endpoint(request: Request, ctx: TenantContext = Depends(get_ctx)):
+        body = await request.json()
+        return mcp_server.handle_rpc(ctx, body)
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -386,6 +406,15 @@ def create_app(media_root: Optional[str] = None, database_url: Optional[str] = N
     @app.get("/api/v1/timelines/{timeline_id}")
     def get_timeline(timeline_id: str, version: Optional[int] = None, ctx: TenantContext = Depends(get_ctx)):
         return timeline_svc.get_timeline(ctx, timeline_id, version=version)
+
+    @app.get("/api/v1/timelines/{timeline_id}/export/otio")
+    def export_otio(timeline_id: str, version: Optional[int] = None, ctx: TenantContext = Depends(get_ctx)):
+        tl = store.get(ctx, "timelines", timeline_id)
+        ver = version or tl["current_version"]
+        rows = store.query(ctx, "timeline_versions", timeline_id=timeline_id, version=ver)
+        if not rows:
+            raise AppError(404, "NOT_FOUND", f"Timeline version {ver} not found")
+        return export_timeline_to_otio(rows[0]["snapshot_json"], name=tl.get("name", "AI Video Studio Timeline"))
 
     @app.get("/api/v1/timelines/{timeline_id}/versions")
     def list_timeline_versions(timeline_id: str, ctx: TenantContext = Depends(get_ctx)):

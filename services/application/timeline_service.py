@@ -339,6 +339,59 @@ class TimelineService:
                 tr["clips"] = ordered
                 clips_affected += len(ordered)
                 changes.append({"operation_id": op["operation_id"], "type": otype, "track_id": tr["id"], "ordered_clip_ids": payload["ordered_clip_ids"]})
+            elif otype == "ADD_TRANSITION":
+                clip = self._find_clip(next_snap, payload["clip_id"])
+                tr_item = {
+                    "id": str(uuid4()),
+                    "type": payload["type"],
+                    "duration_ticks": int(payload["duration_ticks"]),
+                    "position": payload["position"],
+                }
+                clip.setdefault("transitions", []).append(tr_item)
+                clips_affected += 1
+                changes.append({"operation_id": op["operation_id"], "type": otype, "clip_id": clip["id"], "transition_id": tr_item["id"]})
+            elif otype == "REMOVE_TRANSITION":
+                removed = False
+                for tr in next_snap["tracks"]:
+                    if tr["type"] in ("video", "audio"):
+                        for c in tr["clips"]:
+                            before = len(c.get("transitions") or [])
+                            c["transitions"] = [t for t in (c.get("transitions") or []) if t["id"] != payload["transition_id"]]
+                            if len(c["transitions"]) < before:
+                                removed = True
+                                clips_affected += 1
+                                changes.append({"operation_id": op["operation_id"], "type": otype, "transition_id": payload["transition_id"]})
+                if not removed:
+                    raise AppError(422, "VALIDATION_ERROR", f"Transition {payload['transition_id']} not found")
+            elif otype == "ADD_OVERLAY":
+                ov_track = next((t for t in next_snap["tracks"] if t["id"] == payload["track_id"] and t["type"] == "overlay"), None)
+                if not ov_track:
+                    raise AppError(422, "VALIDATION_ERROR", f"Overlay track {payload['track_id']} not found")
+                ov_item = {
+                    "id": str(uuid4()),
+                    "kind": payload["kind"],
+                    "timeline_start": int(payload["timeline_start"]),
+                    "duration": int(payload["duration"]),
+                    "asset_id": payload.get("asset_id"),
+                    "text": payload.get("text"),
+                    "position_x": float(payload.get("position_x", 0.5)),
+                    "position_y": float(payload.get("position_y", 0.5)),
+                    "scale": float(payload.get("scale", 1.0)),
+                    "opacity": float(payload.get("opacity", 1.0)),
+                }
+                ov_track["items"].append(ov_item)
+                changes.append({"operation_id": op["operation_id"], "type": otype, "overlay_id": ov_item["id"], "kind": ov_item["kind"]})
+            elif otype == "REMOVE_OVERLAY":
+                removed = False
+                for tr in next_snap["tracks"]:
+                    if tr["type"] == "overlay":
+                        before = len(tr["items"])
+                        tr["items"] = [it for it in tr["items"] if it["id"] != payload["overlay_id"]]
+                        if len(tr["items"]) < before:
+                            removed = True
+                            changes.append({"operation_id": op["operation_id"], "type": otype, "overlay_id": payload["overlay_id"]})
+                if not removed:
+                    raise AppError(422, "VALIDATION_ERROR", f"Overlay {payload['overlay_id']} not found")
             else:
                 raise AppError(
                     422,

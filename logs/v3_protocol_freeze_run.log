@@ -18,6 +18,17 @@ test_pixel_level_subtitle_burnin_and_afade_reachability (test_phase1_multitrack_
 Closes v5 §4.1 (afade reachable) and §4.2 (pixel-level subtitle visibility on identical duration clips). ... ok
 test_fencing_worker_validates_lease_bounds_and_propagates_stale_rejection (test_phase2_agent_hitl_and_worker.Phase2AgentAndWorkerTest.test_fencing_worker_validates_lease_bounds_and_propagates_stale_rejection) ... ok
 test_l0_agent_blocked_irreversible_guard_and_visual_inspect_endpoint (test_phase2_agent_hitl_and_worker.Phase2AgentAndWorkerTest.test_l0_agent_blocked_irreversible_guard_and_visual_inspect_endpoint) ... ok
+test_anti_hallucination_guard_blocks_forbidden_undo_from_llm_provider (test_phase2_llm_provider.Phase2LLMProviderTest.test_anti_hallucination_guard_blocks_forbidden_undo_from_llm_provider) ... ok
+test_deterministic_provider_parses_speed_and_mute_intents (test_phase2_llm_provider.Phase2LLMProviderTest.test_deterministic_provider_parses_speed_and_mute_intents) ... ok
+test_openai_compatible_provider_parses_structured_json_response (test_phase2_llm_provider.Phase2LLMProviderTest.test_openai_compatible_provider_parses_structured_json_response) ... ok
+test_mcp_initialize_tools_list_and_hitl_guarded_tool_calls (test_phase2_mcp_server.Phase2MCPServerTest.test_mcp_initialize_tools_list_and_hitl_guarded_tool_calls) ... ok
+test_brightness_effect_pixel_proof_and_unknown_effect_fail_fast (test_phase3_capabilities_and_effects.Phase3CapabilitiesAndEffectsTest.test_brightness_effect_pixel_proof_and_unknown_effect_fail_fast) ... ok
+test_capabilities_endpoint_and_custom_plugin_registration (test_phase3_capabilities_and_effects.Phase3CapabilitiesAndEffectsTest.test_capabilities_endpoint_and_custom_plugin_registration) ... ok
+test_add_remove_transition_and_otio_export_endpoint (test_phase3_otio_and_transitions.Phase3OtioAndTransitionsTest.test_add_remove_transition_and_otio_export_endpoint) ... ok
+test_ffmpeg_fade_in_pixel_proof_and_crossfade_still_fail_fast (test_phase3_otio_and_transitions.Phase3OtioAndTransitionsTest.test_ffmpeg_fade_in_pixel_proof_and_crossfade_still_fail_fast) ... ok
+test_logo_overlay_renders_only_during_active_time_window (test_phase3_overlays.Phase3OverlaysTest.test_logo_overlay_renders_only_during_active_time_window) ... ok
+test_dockerfiles_and_nginx_enforce_security_cjk_and_upload_limits (test_phase4_deployment_artifacts.Phase4DeploymentArtifactsTest.test_dockerfiles_and_nginx_enforce_security_cjk_and_upload_limits) ... ok
+test_production_compose_is_valid_yaml_with_no_hardcoded_passwords (test_phase4_deployment_artifacts.Phase4DeploymentArtifactsTest.test_production_compose_is_valid_yaml_with_no_hardcoded_passwords) ... ok
 test_ffmpeg_export_duration_matches_rational_ticks (test_time_semantics_v3.TestTimeSemanticsV3.test_ffmpeg_export_duration_matches_rational_ticks)
 Real FFmpeg + ffprobe check: 4.0s source at 2.0x playback_rate with exact tick-bounded -t exports 2.00s. ... ok
 test_rational_exact_math_standard_and_ntsc_framerates (test_time_semantics_v3.TestTimeSemanticsV3.test_rational_exact_math_standard_and_ntsc_framerates) ... ok
@@ -32,6 +43,6 @@ P0 §2.1 regression: unimplemented ops MUST fail 422 (zero silent no-ops); UPDAT
 test_catches_all_black_video_as_blocker_and_exports_snapshots_for_visible_video (test_visual_frame_inspector.VisualFrameInspectorTest.test_catches_all_black_video_as_blocker_and_exports_snapshots_for_visible_video) ... ok
 
 ----------------------------------------------------------------------
-Ran 22 tests in 10.929s
+Ran 33 tests in 14.064s
 
 OK (skipped=3)

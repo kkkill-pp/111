@@ -9,7 +9,8 @@ from typing import Any
 from uuid import uuid4
 
 from services.application.timeline_service import TimelineService
-from services.infrastructure.contracts import load_permission_matrix, load_tool_contracts
+from services.agent_runtime.llm_provider import LLMProvider, create_llm_provider
+from services.infrastructure.contracts import load_permission_matrix, load_tool_contracts, validate_against_schema
 from services.infrastructure.errors import AppError
 from services.infrastructure.store import TenantContext
 from services.media_engine.visual_frame_inspector import VisualFrameInspector
@@ -19,10 +20,14 @@ IRREVERSIBLE_ACTIONS = frozenset({"export_replace", "delete_media", "external_de
 
 
 class AgentHarness:
-    def __init__(self, timeline_service: TimelineService) -> None:
+    def __init__(self, timeline_service: TimelineService, llm_provider: LLMProvider | None = None) -> None:
         self._timeline_service = timeline_service
         self._matrix = load_permission_matrix()
         self._tool_contracts = load_tool_contracts()
+        self._llm_provider: LLMProvider = llm_provider or create_llm_provider()
+
+    def set_provider(self, provider: LLMProvider) -> None:
+        self._llm_provider = provider
 
     def check_tool_permission(self, ctx: TenantContext, tool_name: str) -> None:
         tools = self._tool_contracts["tools"]
@@ -63,55 +68,24 @@ class AgentHarness:
         self.check_tool_permission(ctx, "propose_edit_operations")
 
         tl = self._timeline_service.get_timeline(ctx, timeline_id, version=base_version)
-        video_track = next((t for t in tl["tracks"] if t["type"] == "video"), None)
-        sub_track = next((t for t in tl["tracks"] if t["type"] == "subtitle"), None)
-        if not video_track or not video_track["clips"]:
-            raise AppError(422, "VALIDATION_ERROR", "Timeline has no video clips to edit")
+        planned = self._llm_provider.plan_edit_operations(tl, user_intent)
+        if not planned.operations:
+            raise AppError(422, "VALIDATION_ERROR", "Planner produced zero operations for timeline")
 
-        first_clip = video_track["clips"][0]
-        src_in = first_clip["source_range"]["in"]
-        src_out = first_clip["source_range"]["out"]
-        trim_delta = min(30000, max(1, (src_out - src_in) // 4))  # trim up to 1s (30000 ticks at 1/30000)
-
-        operations = [
-            {
-                "operation_id": str(uuid4()),
-                "operation_type": "TRIM_CLIP",
-                "payload": {
-                    "clip_id": first_clip["id"],
-                    "new_source_in": src_in + trim_delta,
-                    "new_source_out": src_out,
-                },
-                "reason": f"Trim opening pause per intent: {user_intent}",
-                "evidence_refs": [f"clip:{first_clip['id']}", f"tick:{src_in}-{src_in + trim_delta}"],
-                "risk_level": "medium",
-            }
-        ]
-        if sub_track:
-            operations.append({
-                "operation_id": str(uuid4()),
-                "operation_type": "ADD_SUBTITLE",
-                "payload": {
-                    "track_id": sub_track["id"],
-                    "timeline_start": 0,
-                    "duration": max(1, (src_out - src_in) - trim_delta),
-                    "text": "AI Video Studio HITL Preview",
-                },
-                "reason": "Add concise opening caption aligned to trimmed clip",
-                "evidence_refs": [f"track:{sub_track['id']}"],
-                "risk_level": "low",
-            })
+        # Strict anti-hallucination gate: EVERY LLM-emitted operation MUST pass EditOperation JSON Schema
+        for op in planned.operations:
+            validate_against_schema("edit-operation.schema.json", op, sub_ref="#/$defs/operation_input")
 
         return self._timeline_service.create_proposal(
             ctx=ctx,
             timeline_id=timeline_id,
             base_version=base_version,
-            operations=operations,
+            operations=planned.operations,
             actor_type="agent",
-            actor_id="timeline-editor-agent-v1",
-            rationale=f"Proposed {len(operations)} reversible edits for user intent: '{user_intent}'",
-            evidence_refs=[f"timeline:{timeline_id}@v{base_version}"],
-            risk_level="medium",
+            actor_id=f"agent:{planned.provider_name}:{planned.model_id}",
+            rationale=planned.rationale,
+            evidence_refs=[f"timeline:{timeline_id}@v{base_version}", *planned.evidence_refs],
+            risk_level=planned.risk_level,
             idempotency_key=idempotency_key,
             user_intent=user_intent,
         )
