@@ -32,6 +32,7 @@ from services.media_engine.ffmpeg_renderer import FFmpegRendererAdapter, RenderP
 from services.media_engine.qa_engine import QAEngine
 from services.workers.render_job_manager import RenderJobManager
 from services.plugins import PluginRegistry
+from services.plugins.platform_registry import PlatformPluginRegistry, verify_platform_token
 from services.plugins.plugin_loader import load_plugins_from_directory
 from services.plugins.builtin import (
     AnchoredReviewPlugin,
@@ -161,6 +162,23 @@ class MediaGatewayGenerateBody(BaseModel):
     duration_sec: float = Field(default=2.0, ge=0.5, le=30.0)
 
 
+class PlatformPluginReleaseBody(BaseModel):
+    plugin_id: str = Field(min_length=3, max_length=120)
+    publisher: str = Field(min_length=1, max_length=160)
+    display_name: str = Field(min_length=1, max_length=200)
+    category: str
+    license_id: str = Field(min_length=1, max_length=80)
+    version: str
+    manifest: dict[str, Any]
+    artifact_uri: str = Field(min_length=1, max_length=2000)
+    artifact_sha256: str = Field(min_length=64, max_length=64)
+
+
+class PlatformLicenseReviewBody(BaseModel):
+    approved: bool
+    note: str = Field(default="", max_length=2000)
+
+
 class TenantPluginPolicyBody(BaseModel):
     enabled: Optional[bool] = None
     config: Optional[dict[str, Any]] = None
@@ -192,11 +210,20 @@ def create_app(
     review_svc = ReviewService(store)
     agent_harness = AgentHarness(timeline_svc)
     plugin_registry = PluginRegistry()
+    effective_database_url = database_url if database_url is not None else os.environ.get("DATABASE_URL")
+    effective_platform_registry_url = os.environ.get("AIVS_PLATFORM_REGISTRY_DATABASE_URL") or effective_database_url
+    platform_plugin_registry = (
+        PlatformPluginRegistry(effective_platform_registry_url)
+        if effective_platform_registry_url and effective_platform_registry_url.startswith(("postgres://", "postgresql://"))
+        else None
+    )
     plugin_registry.register(MotionTemplatePlugin())
     plugin_registry.register(AnchoredReviewPlugin())
     plugin_registry.register(MotionOverlayRendererPlugin())
     plugin_registry.register(MediaGatewayPlugin())
     plugin_registry.register(HtmlGsapMotionPlugin())
+    if platform_plugin_registry is not None:
+        plugin_registry.platform_state_provider = platform_plugin_registry
     effective_plugins_dir = plugins_dir if plugins_dir is not None else os.environ.get("AIVS_PLUGINS_DIR")
     if effective_plugins_dir:
         load_plugins_from_directory(effective_plugins_dir, plugin_registry)
@@ -247,6 +274,7 @@ def create_app(
     app.state.rate_limiter = rate_limiter
     app.state.render_job_mgr = render_job_mgr
     app.state.plugin_registry = plugin_registry
+    app.state.platform_plugin_registry = platform_plugin_registry
 
     @app.middleware("http")
     async def observability_and_hardening_middleware(request: Request, call_next):
@@ -868,6 +896,39 @@ def create_app(
         require_role(ctx, ["owner", "admin", "editor"])
         return render_job_mgr.cancel_job(ctx, job_id)
 
+    def require_platform_admin(
+        x_platform_admin_token: Optional[str] = Header(None, alias="X-Platform-Admin-Token"),
+        x_platform_admin_actor: Optional[str] = Header(None, alias="X-Platform-Admin-Actor"),
+    ) -> str:
+        expected = os.environ.get("AIVS_PLATFORM_ADMIN_TOKEN")
+        if not verify_platform_token(expected, x_platform_admin_token):
+            raise AppError(403, "PLATFORM_ADMIN_REQUIRED", "Valid platform admin token required")
+        if not x_platform_admin_actor or not x_platform_admin_actor.strip() or len(x_platform_admin_actor) > 160:
+            raise AppError(400, "PLATFORM_ADMIN_ACTOR_REQUIRED", "X-Platform-Admin-Actor must identify the platform operator")
+        if platform_plugin_registry is None:
+            raise AppError(503, "PLATFORM_REGISTRY_UNAVAILABLE", "Persistent platform registry requires PostgreSQL and migration 010")
+        return x_platform_admin_actor.strip()
+
+    @app.get("/api/v1/platform/plugins")
+    def list_platform_plugins(actor: str = Depends(require_platform_admin)):
+        return {"plugins": platform_plugin_registry.list_plugins()}
+
+    @app.post("/api/v1/platform/plugins/releases", status_code=201)
+    def register_platform_plugin_release(body: PlatformPluginReleaseBody, actor: str = Depends(require_platform_admin)):
+        return platform_plugin_registry.register_release(**body.model_dump(), actor=actor)
+
+    @app.post("/api/v1/platform/plugins/{plugin_id}/license-review")
+    def review_platform_plugin_license(plugin_id: str, body: PlatformLicenseReviewBody, actor: str = Depends(require_platform_admin)):
+        return platform_plugin_registry.review_license(plugin_id, approved=body.approved, actor=actor, note=body.note)
+
+    @app.post("/api/v1/platform/plugins/{plugin_id}/enable")
+    def enable_platform_plugin(plugin_id: str, actor: str = Depends(require_platform_admin)):
+        return platform_plugin_registry.set_enabled(plugin_id, enabled=True, actor=actor)
+
+    @app.post("/api/v1/platform/plugins/{plugin_id}/disable")
+    def disable_platform_plugin(plugin_id: str, actor: str = Depends(require_platform_admin)):
+        return platform_plugin_registry.set_enabled(plugin_id, enabled=False, actor=actor)
+
     @app.get("/api/v1/plugins")
     def list_plugins(category: Optional[str] = None):
         return {"plugins": plugin_registry.list_plugins(category=category)}
@@ -875,12 +936,16 @@ def create_app(
     @app.post("/api/v1/plugins/{plugin_id}/enable")
     def enable_plugin(plugin_id: str, ctx: TenantContext = Depends(get_ctx)):
         require_role(ctx, ["owner", "admin"])
-        return plugin_registry.enable(plugin_id)
+        result = plugin_registry.set_tenant_policy(ctx.tenant_id, plugin_id, enabled=True)
+        store.add_audit(ctx, "user", ctx.user_id, "plugin.tenant_enabled", "plugin", plugin_id)
+        return result
 
     @app.post("/api/v1/plugins/{plugin_id}/disable")
     def disable_plugin(plugin_id: str, ctx: TenantContext = Depends(get_ctx)):
         require_role(ctx, ["owner", "admin"])
-        return plugin_registry.disable(plugin_id)
+        result = plugin_registry.set_tenant_policy(ctx.tenant_id, plugin_id, enabled=False)
+        store.add_audit(ctx, "user", ctx.user_id, "plugin.tenant_disabled", "plugin", plugin_id)
+        return result
 
     @app.get("/api/v1/tenant/plugins")
     def list_tenant_plugins(category: Optional[str] = None, ctx: TenantContext = Depends(get_ctx)):

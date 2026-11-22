@@ -83,6 +83,9 @@ def load_plugin_package(plugin_dir: str | Path, registry: PluginRegistry) -> dic
     if not isinstance(plugin_instance, AIVSPlugin):
         raise AppError(422, "VALIDATION_ERROR", f"Factory '{factory_name}' must return an AIVSPlugin instance")
 
+    # Third-party code is never active merely because it was found on disk.
+    # The platform catalog must approve its license and explicitly enable it first.
+    plugin_instance.manifest.enabled = False
     return registry.register(plugin_instance)
 
 

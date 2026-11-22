@@ -95,10 +95,13 @@ class AIVSMCPServer:
         self._store = store
         self._plugins = plugin_registry
 
-    def _dynamic_plugin_tools(self) -> list[dict[str, Any]]:
+    def _dynamic_plugin_tools(self, ctx: TenantContext) -> list[dict[str, Any]]:
         if self._plugins is None:
             return []
-        enabled_ids = {p["plugin_id"] for p in self._plugins.list_plugins() if p["enabled"]}
+        enabled_ids = {
+            p["plugin_id"] for p in self._plugins.list_plugins_for_tenant(ctx.tenant_id)
+            if p["effective_enabled"]
+        }
         tools: list[dict[str, Any]] = [
             {
                 "name": "aivs_list_plugins",
@@ -156,7 +159,7 @@ class AIVSMCPServer:
         if method == "tools/list":
             tools = list(MCP_TOOLS_CATALOG)
             if params.get("include_plugins"):
-                tools.extend(self._dynamic_plugin_tools())
+                tools.extend(self._dynamic_plugin_tools(ctx))
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -217,9 +220,9 @@ class AIVSMCPServer:
             return self._agent.inspect_rendered_frames(ctx, art["storage_key"], save_dir=snap_dir)
         if self._plugins is not None:
             if tool_name == "aivs_list_plugins":
-                return {"plugins": self._plugins.list_plugins()}
+                return {"plugins": self._plugins.list_plugins_for_tenant(ctx.tenant_id)}
             if tool_name == "aivs_compile_motion_md":
-                plugin = self._plugins.require_enabled("motion_template_plugin")
+                plugin, _ = self._plugins.require_enabled_for_tenant("motion_template_plugin", ctx.tenant_id)
                 return plugin.compile_to_operations(
                     args["motion_md"],
                     brand_kit=args.get("brand_kit"),
@@ -228,7 +231,7 @@ class AIVSMCPServer:
                 )
             if tool_name == "aivs_list_review_comments":
                 self._store.get(ctx, "timelines", args["timeline_id"])
-                plugin = self._plugins.require_enabled("anchored_review_plugin")
+                plugin, _ = self._plugins.require_enabled_for_tenant("anchored_review_plugin", ctx.tenant_id)
                 return {"comments": plugin.list_comments(ctx, args["timeline_id"])}
         raise AppError(403, "FORBIDDEN", f"Unknown or disallowed MCP tool: {tool_name}")
 

@@ -29,3 +29,9 @@ PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```bash
 uvicorn apps.api.main:app --reload --port 8000
 ```
+
+## Sprint 4 — Global Platform Plugin Registry
+
+Sprint 4 adds a platform-global plugin catalog, immutable release records, append-only governance events, license-review gating, and token-protected platform administration APIs. Tenant plugin enablement/configuration remains tenant-scoped and is not elevated by this registry.
+
+See [`docs/SPRINT4_PLATFORM_REGISTRY.md`](docs/SPRINT4_PLATFORM_REGISTRY.md) for migration 010, dedicated database role setup, API headers, and verification boundaries.

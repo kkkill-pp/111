@@ -65,6 +65,8 @@ class PluginRegistry:
         self._plugins: dict[str, AIVSPlugin] = {}
         # tenant_id -> plugin_id -> {"enabled": bool, "config": dict}
         self._tenant_policies: dict[str, dict[str, dict[str, Any]]] = {}
+        # Optional persistent source of truth for third-party global approval/enablement.
+        self.platform_state_provider: Any = None
 
     def register(self, plugin: AIVSPlugin) -> dict[str, Any]:
         m = plugin.manifest
@@ -116,14 +118,28 @@ class PluginRegistry:
             raise AppError(404, "PLUGIN_NOT_FOUND", f"Plugin '{plugin_id}' is not registered")
         return plugin
 
+    def _is_globally_enabled(self, plugin: AIVSPlugin) -> bool:
+        """Resolve catalog state on every use so all API instances observe revocation promptly."""
+        state = None
+        if self.platform_state_provider is not None:
+            state = self.platform_state_provider.get_runtime_state(plugin.manifest.plugin_id)
+        if state is None:
+            return bool(plugin.manifest.enabled)
+        with self._lock:
+            changed = plugin.manifest.enabled != bool(state)
+            plugin.manifest.enabled = bool(state)
+        if changed:
+            (plugin.on_enable if state else plugin.on_disable)(self)
+        return bool(state)
+
     def require_enabled(self, plugin_id: str) -> AIVSPlugin:
-        """Fail loudly (503) if plugin is disabled — zero silent fallback (ADR-004)."""
+        """Fail loudly (503) if plugin is globally disabled — zero silent fallback (ADR-004)."""
         plugin = self.get_plugin(plugin_id)
-        if not plugin.manifest.enabled:
+        if not self._is_globally_enabled(plugin):
             raise AppError(
                 503,
                 "PLUGIN_DISABLED",
-                f"Plugin '{plugin_id}' is currently disabled; enable it via POST /api/v1/plugins/{plugin_id}/enable",
+                f"Plugin '{plugin_id}' is currently disabled by platform policy",
             )
         return plugin
 
@@ -132,7 +148,12 @@ class PluginRegistry:
             items = list(self._plugins.values())
         if category:
             items = [p for p in items if p.manifest.category == category]
-        return [p.manifest.to_dict() for p in sorted(items, key=lambda p: p.manifest.plugin_id)]
+        result = []
+        for plugin in sorted(items, key=lambda p: p.manifest.plugin_id):
+            item = plugin.manifest.to_dict()
+            item["enabled"] = self._is_globally_enabled(plugin)
+            result.append(item)
+        return result
 
     def set_tenant_policy(
         self,
@@ -142,6 +163,7 @@ class PluginRegistry:
         config: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         plugin = self.get_plugin(plugin_id)
+        global_enabled = self._is_globally_enabled(plugin)
         with self._lock:
             tmap = self._tenant_policies.setdefault(tenant_id, {})
             cur = dict(tmap.get(plugin_id) or {"enabled": True, "config": {}})
@@ -150,23 +172,24 @@ class PluginRegistry:
             if config is not None:
                 cur["config"] = dict(config)
             tmap[plugin_id] = cur
-            effective = bool(plugin.manifest.enabled and cur["enabled"])
-            return {
-                **plugin.manifest.to_dict(),
-                "global_enabled": plugin.manifest.enabled,
-                "tenant_enabled": cur["enabled"],
-                "effective_enabled": effective,
-                "tenant_config": dict(cur["config"]),
-            }
+        effective = bool(global_enabled and cur["enabled"])
+        return {
+            **plugin.manifest.to_dict(),
+            "global_enabled": global_enabled,
+            "tenant_enabled": cur["enabled"],
+            "effective_enabled": effective,
+            "tenant_config": dict(cur["config"]),
+        }
 
     def get_tenant_policy(self, tenant_id: str, plugin_id: str) -> dict[str, Any]:
         plugin = self.get_plugin(plugin_id)
         with self._lock:
             cur = dict(self._tenant_policies.get(tenant_id, {}).get(plugin_id) or {"enabled": True, "config": {}})
-        effective = bool(plugin.manifest.enabled and cur["enabled"])
+        global_enabled = self._is_globally_enabled(plugin)
+        effective = bool(global_enabled and cur["enabled"])
         return {
             **plugin.manifest.to_dict(),
-            "global_enabled": plugin.manifest.enabled,
+            "global_enabled": global_enabled,
             "tenant_enabled": cur["enabled"],
             "effective_enabled": effective,
             "tenant_config": dict(cur["config"]),

@@ -107,7 +107,7 @@ class TestPhase5MediaGatewayAndPluginUI(unittest.TestCase):
         asset_id = r_adopt.json()["asset_id"]
         self.assertIn(asset_id, self.app.state.store._tables["assets"])
 
-    def test_hot_disable_media_gateway_plugin_blocks_generation_with_503(self):
+    def test_tenant_disable_media_gateway_plugin_blocks_generation_with_403(self):
         proj_id = self._create_project()
         self.assertEqual(
             self.client.post("/api/v1/plugins/media_gateway_plugin/disable", headers=self._hdr(role="admin")).status_code,
@@ -118,8 +118,8 @@ class TestPhase5MediaGatewayAndPluginUI(unittest.TestCase):
             json={"project_id": proj_id, "modality": "image", "prompt": "blocked test"},
             headers=self._hdr(),
         )
-        self.assertEqual(r_blocked.status_code, 503)
-        self.assertEqual(r_blocked.json()["code"], "PLUGIN_DISABLED")
+        self.assertEqual(r_blocked.status_code, 403)
+        self.assertEqual(r_blocked.json()["code"], "PLUGIN_DISABLED_FOR_TENANT")
 
     def test_web_plugin_center_panel_wired_in_app(self):
         panel_tsx = (REPO_ROOT / "apps/web/src/components/PluginCenterPanel.tsx").read_text(encoding="utf-8")

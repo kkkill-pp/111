@@ -2,7 +2,7 @@
 
 Verifies:
   1. LIC-001 license enforcement (GPL/AGPL plugins rejected 422; MIT/Apache-2.0 accepted)
-  2. Hot enable/disable lifecycle (disabled plugin fails loudly with 503 PLUGIN_DISABLED)
+  2. Tenant enable/disable policy (tenant-disabled plugin fails loudly with 403 PLUGIN_DISABLED_FOR_TENANT)
   3. MotionTemplatePlugin: parses Motion.md + BrandKit -> compiles v3.0 EditOperations[] -> applies to Timeline
   4. AnchoredReviewPlugin: tenant-isolated timecode-anchored comments + Agent intent compilation + resolve
   5. MotionOverlayRendererPlugin: renders BrandKit RGBA PNG banner -> FFmpeg ADD_OVERLAY -> OpenCV pixel proof
@@ -137,23 +137,25 @@ class TestPhase5PluginPlatform(unittest.TestCase):
         ids = {p["plugin_id"] for p in r_list.json()["plugins"]}
         self.assertEqual(ids, {"motion_template_plugin", "anchored_review_plugin", "motion_overlay_renderer_plugin", "media_gateway_plugin", "html_gsap_motion_plugin"})
 
-        # 3) Disable motion_template_plugin -> compile endpoint MUST fail 503 PLUGIN_DISABLED
+        # 3) Tenant admin can disable only this tenant's plugin policy.
         r_dis = self.client.post("/api/v1/plugins/motion_template_plugin/disable", headers=self._hdr(role="admin"))
         self.assertEqual(r_dis.status_code, 200)
-        self.assertFalse(r_dis.json()["enabled"])
+        self.assertFalse(r_dis.json()["tenant_enabled"])
+        self.assertTrue(r_dis.json()["global_enabled"])
 
         r_blocked = self.client.post(
             "/api/v1/plugins/motion-template/compile",
             json={"motion_md": SAMPLE_MOTION_MD},
             headers=self._hdr(),
         )
-        self.assertEqual(r_blocked.status_code, 503)
-        self.assertEqual(r_blocked.json()["code"], "PLUGIN_DISABLED")
+        self.assertEqual(r_blocked.status_code, 403)
+        self.assertEqual(r_blocked.json()["code"], "PLUGIN_DISABLED_FOR_TENANT")
 
         # 4) Re-enable -> works immediately
         r_en = self.client.post("/api/v1/plugins/motion_template_plugin/enable", headers=self._hdr(role="admin"))
         self.assertEqual(r_en.status_code, 200)
-        self.assertTrue(r_en.json()["enabled"])
+        self.assertTrue(r_en.json()["tenant_enabled"])
+        self.assertTrue(r_en.json()["global_enabled"])
 
     def test_motion_md_template_compiles_and_applies_to_timeline(self):
         _, tl_id = self._bootstrap_timeline()

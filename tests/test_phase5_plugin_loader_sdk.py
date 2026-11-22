@@ -31,8 +31,11 @@ class TestPhase5PluginLoaderSDK(unittest.TestCase):
         ids = {p["plugin_id"] for p in r.json()["plugins"]}
         self.assertIn("sample_brand_watermark_plugin", ids)
 
-        plugin = app.state.plugin_registry.require_enabled("sample_brand_watermark_plugin")
-        self.assertEqual(plugin.get_corner_preset("bottom_right")["position_y"], 0.88)
+        plugin = app.state.plugin_registry.get_plugin("sample_brand_watermark_plugin")
+        self.assertFalse(plugin.manifest.enabled, "third-party plugins must be disabled until platform approval")
+        with self.assertRaises(AppError) as err:
+            app.state.plugin_registry.require_enabled("sample_brand_watermark_plugin")
+        self.assertEqual(err.exception.code, "PLUGIN_DISABLED")
 
     def test_pre_import_lic001_blocks_gpl_plugin_before_executing_code(self):
         bad_dir = Path(self.tmpdir) / "evil_gpl"

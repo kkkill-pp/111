@@ -1,4 +1,4 @@
-"""Phase 6 Stage 1 Tests: Per-Tenant Plugin Policy Isolation, Default BrandKit Config & Global Override."""
+"""Phase 6 Stage 1 Tests: Per-Tenant Plugin Policy Isolation and Default BrandKit Config."""
 import unittest
 from uuid import uuid4
 
@@ -98,21 +98,30 @@ class TestPhase6TenantPluginPolicies(unittest.TestCase):
         self.assertEqual(r_a.status_code, 200)
         self.assertEqual(r_a.json()["template"]["title"], "FallbackBrand Promo")
 
-    def test_global_disable_overrides_tenant_enabled_policy(self):
+    def test_tenant_disable_route_does_not_disable_other_tenants(self):
         self.client.put(
             "/api/v1/tenant/plugins/motion_template_plugin",
             json={"enabled": True},
             headers=self._hdr(self.tenant_b, role="admin"),
         )
-        self.client.post("/api/v1/plugins/motion_template_plugin/disable", headers=self._hdr(self.tenant_b, role="admin"))
+        disabled = self.client.post("/api/v1/plugins/motion_template_plugin/disable", headers=self._hdr(self.tenant_b, role="admin"))
+        self.assertFalse(disabled.json()["tenant_enabled"])
+        self.assertTrue(disabled.json()["global_enabled"])
 
         r_b = self.client.post(
             "/api/v1/plugins/motion-template/compile",
             json={"motion_md": MINI_MOTION_MD},
             headers=self._hdr(self.tenant_b),
         )
-        self.assertEqual(r_b.status_code, 503)
-        self.assertEqual(r_b.json()["code"], "PLUGIN_DISABLED")
+        self.assertEqual(r_b.status_code, 403)
+        self.assertEqual(r_b.json()["code"], "PLUGIN_DISABLED_FOR_TENANT")
+
+        r_a = self.client.post(
+            "/api/v1/plugins/motion-template/compile",
+            json={"motion_md": MINI_MOTION_MD},
+            headers=self._hdr(self.tenant_a),
+        )
+        self.assertEqual(r_a.status_code, 200)
 
 
 if __name__ == "__main__":

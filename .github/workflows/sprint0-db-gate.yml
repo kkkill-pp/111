@@ -85,6 +85,15 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/008_plugin_platform_rollback.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/008_plugin_platform_rls.sql
 
+      - name: Sprint 4 Gate — Global Plugin Registry Migration 010 Round-Trip
+        env:
+          DATABASE_URL: postgres://postgres:postgres_ci_password@localhost:5432/aivs_sprint0_empty
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/010_platform_plugin_registry.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/010_platform_plugin_registry_rollback.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/010_platform_plugin_registry.sql
+
       - name: Run Full Automated Test Suite (Live PG15 psycopg Persistence + Multi-Track + Pixel Subtitle + Time Semantics v3)
         env:
           DATABASE_URL: postgres://postgres:postgres_ci_password@localhost:5432/aivs_sprint0_empty
